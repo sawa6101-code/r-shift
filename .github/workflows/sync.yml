@@ -26,7 +26,7 @@ jobs:
         run: |
           test -n "$RSHIFT_USER_ID"
           test -n "$RSHIFT_PASSWORD"
-      - name: Inspect employee row links
+      - name: Inspect logged-in staff label
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
           RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
@@ -36,17 +36,20 @@ jobs:
         run: |
           python - <<'PY'
           from bs4 import BeautifulSoup
+          import re
           import rshift_sync
-          html, _, _ = rshift_sync.fetch_staff_page()
-          soup = BeautifulSoup(html, 'html.parser')
-          table = soup.select_one('table.staffpage-monthly-table')
-          rows = table.find_all('tr') if table else []
-          for i in (3,4,5):
-              row = rows[i]
-              cell = row.find_all(['td','th'])[0]
-              print('[row]', i, 'links=', [(a.get_text(' ',strip=True)[:30], a.get('href'), a.get('onclick')) for a in cell.find_all('a')])
-              print('[row]', i, 'inputs=', [(x.get('name'), x.get('value',''), x.get('type')) for x in cell.find_all('input')])
-              print('[row]', i, 'buttons=', [(b.get('name'), b.get('value',''), b.get('onclick')) for b in cell.find_all('button')])
+          s, response = rshift_sync.login_session()
+          soup = BeautifulSoup(response.text, 'html.parser')
+          print('[top] title=', soup.title.get_text(' ', strip=True) if soup.title else '')
+          for tag in soup.find_all(['a','span','div','p','td','th','label']):
+              text = tag.get_text(' ', strip=True)
+              if any(k in text for k in ('ログアウト','ようこそ','さん','従業員トップ')) and len(text) < 120:
+                  print('[top] text=', text)
+          for form in soup.find_all('form'):
+              for inp in form.select('input[name]'):
+                  name = inp.get('name','').lower()
+                  if any(k in name for k in ('staff','employee','user','login','name')):
+                      print('[top] input=', inp.get('name'), inp.get('type'), 'has_value=', bool(inp.get('value')))
           PY
       - name: Fetch shifts and generate ICS
         env:
