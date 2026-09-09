@@ -49,6 +49,18 @@ jobs:
 
           html = rshift_sync.login_and_fetch()
           soup = BeautifulSoup(html, 'html.parser')
+          print('[nav] links with date/month navigation clues:')
+          for a in soup.find_all('a', href=True):
+              text = a.get_text(' ', strip=True)
+              href = a.get('href', '')
+              if re.search(r'\d{4}/\d{1,2}|\d{1,2}月|前月|次月|前へ|次へ|month|date|plan', text + ' ' + href, re.I):
+                  print('[nav]', text[:80], '=>', href[:200])
+          print('[nav] forms and hidden fields:')
+          for i, form in enumerate(soup.find_all('form')):
+              hidden = [(x.get('name'), x.get('value','')) for x in form.select('input[type=hidden][name]')]
+              if hidden:
+                  print('[nav] form', i, 'action=', form.get('action'), 'hidden_names=', [x[0] for x in hidden])
+
           selectors = ['.staffpage-plan-list-shift', '.plan_list_shift', '.popup_working_time', '.shift_non_confirm']
           for selector in selectors:
               nodes = soup.select(selector)
