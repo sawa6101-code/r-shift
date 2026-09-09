@@ -232,7 +232,12 @@ def parse_staff_month(html, year, month, staff_name):
         if key not in seen:
             seen.add(key)
             shifts.append(item)
-    return sorted(shifts, key=lambda x: x[0])
+
+    def sort_key(item):
+        value = item[0]
+        return value.date() if isinstance(value, datetime) else value
+
+    return sorted(shifts, key=sort_key)
 
 
 def build_calendar(shifts):
@@ -247,16 +252,11 @@ def build_calendar(shifts):
         uid_source = f"{start.isoformat()}|{end.isoformat()}|{summary}|{location or ''}|{all_day}"
         event.add("uid", hashlib.sha256(uid_source.encode()).hexdigest() + "@r-shift-sync")
         event.add("summary", summary)
-        if all_day:
-            event.add("dtstart", start)
-            event.add("dtend", end)
-        else:
-            event.add("dtstart", start)
-            event.add("dtend", end)
+        event.add("dtstart", start)
+        event.add("dtend", end)
         event.add("dtstamp", datetime.now(timezone.utc))
         event.add("X-RSHIFT-ORIGIN", HOME_LOCATION)
         if location:
-            # iCalendarのLOCATIONはイベントの目的地（応援先店舗）を表す。
             event.add("location", location)
             event.add("X-RSHIFT-DESTINATION", location)
             event.add("X-APPLE-TRAVEL-ADVISORY-BEHAVIOR", "AUTOMATIC")
