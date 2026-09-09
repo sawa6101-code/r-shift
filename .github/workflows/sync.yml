@@ -16,25 +16,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Validate secrets
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
           RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
         run: |
-          test -n "$RSHIFT_USER_ID" || { echo 'RSHIFT_USER_ID が未設定です'; exit 1; }
-          test -n "$RSHIFT_PASSWORD" || { echo 'RSHIFT_PASSWORD が未設定です'; exit 1; }
-          echo 'R-Shift認証情報: 設定済み'
-
-      - name: Inspect monthly table
+          test -n "$RSHIFT_USER_ID" || exit 1
+          test -n "$RSHIFT_PASSWORD" || exit 1
+      - name: Inspect current employee row
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
           RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
@@ -44,20 +39,17 @@ jobs:
         run: |
           python - <<'PY'
           from bs4 import BeautifulSoup
-          import re
           import rshift_sync
-          html, year, month = rshift_sync.fetch_staff_page()
+          html, _, _ = rshift_sync.fetch_staff_page()
           soup = BeautifulSoup(html, 'html.parser')
-          print('[inspect] tables=', len(soup.find_all('table')))
-          for ti, table in enumerate(soup.find_all('table')[:5]):
-              print('[inspect] table', ti, 'class=', table.get('class', []), 'rows=', len(table.find_all('tr')))
-              for ri, row in enumerate(table.find_all('tr')[:20]):
-                  text = row.get_text(' | ', strip=True)
-                  times = re.findall(r'(?:[01]?\d|2[0-3])[:：][0-5]\d', text)
-                  dates = re.findall(r'\d{1,2}[/-]\d{1,2}|\d{1,2}月\d{1,2}日', text)
-                  print('[inspect] row', ri, 'cells=', len(row.find_all(['td','th'])), 'dates=', dates[:5], 'times=', times[:6], 'text=', text[:300])
+          table = soup.select_one('table.staffpage-monthly-table')
+          rows = table.find_all('tr') if table else []
+          for i, row in enumerate(rows[3:8], start=3):
+              cells = row.find_all(['td','th'])
+              print('[row]', i, 'attrs=', row.attrs)
+              for ci, cell in enumerate(cells[:8]):
+                  print('[cell]', ci, 'attrs=', cell.attrs, 'text=', cell.get_text(' ', strip=True)[:80])
           PY
-
       - name: Fetch shifts and generate ICS
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
@@ -66,7 +58,6 @@ jobs:
           RSHIFT_ID_FIELD: login_id
           RSHIFT_PASSWORD_FIELD: password
         run: python rshift_sync.py
-
       - name: Commit updated calendar
         run: |
           git config user.name 'github-actions[bot]'
