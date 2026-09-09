@@ -1,6 +1,5 @@
 import os
 import re
-import hashlib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.parse import urljoin
@@ -17,106 +16,145 @@ PASSWORD = os.environ["RSHIFT_PASSWORD"]
 OUTPUT = Path(os.getenv("OUTPUT_ICS_PATH", "docs/shift_calendar.ics"))
 JST = timezone(timedelta(hours=9))
 
+TIME_RE = re.compile(r"(?:[01]?\d|2[0-3])[:：][0-5]\d")
+DATE_PATTERNS = (
+    r"20\d{2}[/-]\d{1,2}[/-]\d{1,2}",
+    r"20\d{2}年\d{1,2}月\d{1,2}日",
+    r"\d{1,2}[/-]\d{1,2}",
+    r"\d{1,2}月\d{1,2}日",
+)
+
 
 def clean(text):
     return re.sub(r"\s+", " ", text or "").strip()
 
 
 def parse_date(value, default_year=None, default_month=None):
-    value = clean(value).replace("年", "-").replace("月", "-").replace("日", "")
-    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"):
-        try:
-            return datetime.strptime(value, fmt).date()
-        except ValueError:
-            pass
-    m = re.search(r"(20\d{2})[-/]?(\d{1,2})[-/]?(\d{1,2})", value)
+    value = clean(value)
+    year = default_year or datetime.now(JST).year
+
+    m = re.search(r"(20\d{2})[/-](\d{1,2})[/-](\d{1,2})", value)
     if m:
         return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+
+    m = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日", value)
+    if m:
+        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+
     m = re.search(r"(\d{1,2})[/-](\d{1,2})", value)
     if m:
-        year = default_year or datetime.now(JST).year
         return datetime(year, int(m.group(1)), int(m.group(2))).date()
+
     m = re.search(r"(\d{1,2})月(\d{1,2})日", value)
     if m:
-        year = default_year or datetime.now(JST).year
         return datetime(year, int(m.group(1)), int(m.group(2))).date()
+
     m = re.search(r"(\d{1,2})日", value)
     if m and default_month:
-        year = default_year or datetime.now(JST).year
         return datetime(year, default_month, int(m.group(1))).date()
+
     raise ValueError(f"日付を解析できません: {value}")
 
 
-def parse_time(value):
-    value = clean(value).replace("時", ":").replace("分", "")
-    m = re.search(r"(\d{1,2})[:：](\d{2})", value)
-    if not m:
-        raise ValueError(f"時刻を解析できません: {value}")
-    hour, minute = int(m.group(1)), int(m.group(2))
-    if hour > 23 or minute > 59:
-        raise ValueError(f"不正な時刻です: {value}")
-    return hour, minute
-
-
-def extract_date(text, page_year, page_month):
-    patterns = [
-        r"20\d{2}[/-]\d{1,2}[/-]\d{1,2}",
-        r"20\d{2}年\d{1,2}月\d{1,2}日",
-        r"\d{1,2}[/-]\d{1,2}",
-        r"\d{1,2}月\d{1,2}日",
-    ]
-    for pattern in patterns:
+def extract_date(text, default_year, default_month):
+    text = clean(text)
+    for pattern in DATE_PATTERNS:
         m = re.search(pattern, text)
         if m:
             try:
-                return parse_date(m.group(0), page_year, page_month)
+                return parse_date(m.group(0), default_year, default_month)
             except ValueError:
                 pass
     return None
 
 
+def parse_time(value):
+    value = clean(value).replace("時", ":").replace("分", "")
+    m = TIME_RE.search(value)
+    if not m:
+        raise ValueError(f"時刻を解析できません: {value}")
+    hour, minute = map(int, re.split(r"[:：]", m.group(0)))
+    return hour, minute
+
+
 def node_metadata(node):
-    """DOM上の日付候補を、表示テキストとdata/title系属性から抽出する。"""
     values = [node.get_text(" ", strip=True)]
     for key, value in node.attrs.items():
         if key == "class":
             continue
-        if key == "data" and isinstance(value, dict):
+        if isinstance(value, dict):
             values.extend(str(v) for v in value.values())
         elif isinstance(value, str):
             values.append(value)
     return clean(" | ".join(values))
 
 
-def nearest_date(node, page_year, page_month):
-    """シフト要素自身→親→兄弟の順で日付を探索する。"""
+def explicit_date_candidates(soup, default_year, default_month):
+    """ページ全体から日付ラベルを収集する。月セレクタ等のページ全体テキストは参照しない。"""
+    tags = soup.find_all(True)
+    index = {id(tag): i for i, tag in enumerate(tags)}
+    candidates = []
+    seen = set()
+    for tag in tags:
+        # 日付ラベルは葉要素を優先し、親要素に複数の日付が含まれる場合の誤認を防ぐ。
+        if tag.find(True):
+            continue
+        d = extract_date(node_metadata(tag), default_year, default_month)
+        if d and d not in seen:
+            seen.add(d)
+            candidates.append((index[id(tag)], tag, d))
+    return candidates, index
+
+
+def date_from_related_structure(node, default_year, default_month):
+    """同じ行・カード・セル群に属する明示的な日付を優先して取得する。"""
+    # まず同一テーブル行を確認する。
+    tr = node.find_parent("tr")
+    if tr:
+        found = []
+        for tag in tr.find_all(True):
+            if tag.find(True):
+                continue
+            d = extract_date(node_metadata(tag), default_year, default_month)
+            if d and d not in found:
+                found.append(d)
+        if len(found) == 1:
+            return found[0]
+
+    # 次に近い祖先カードを確認する。複数日付を含む大きなコンテナは除外する。
     current = node
-    for _ in range(5):
+    for _ in range(8):
         if current is None:
             break
-        d = extract_date(node_metadata(current), page_year, page_month)
-        if d:
-            return d
+        found = []
+        for tag in current.find_all(True):
+            if tag.find(True):
+                continue
+            d = extract_date(node_metadata(tag), default_year, default_month)
+            if d and d not in found:
+                found.append(d)
+                if len(found) > 1:
+                    break
+        if len(found) == 1:
+            return found[0]
         current = current.parent
-
-    parent = node.parent
-    if parent:
-        siblings = list(parent.children)
-        try:
-            idx = siblings.index(node)
-        except ValueError:
-            idx = -1
-        if idx >= 0:
-            for sibling in reversed(siblings[max(0, idx - 4):idx]):
-                if getattr(sibling, "name", None):
-                    d = extract_date(node_metadata(sibling), page_year, page_month)
-                    if d:
-                        return d
     return None
 
 
+def nearest_date(node, candidates, index, default_year, default_month):
+    d = date_from_related_structure(node, default_year, default_month)
+    if d:
+        return d
+
+    # DOM上で最も近い明示的日付ラベルを使う。
+    pos = index.get(id(node))
+    if pos is None or not candidates:
+        return None
+    return min(candidates, key=lambda item: abs(item[0] - pos))[2]
+
+
 def make_shift(d, times):
-    if len(times) < 2 or d is None:
+    if d is None or len(times) < 2:
         return None
     try:
         sh, sm = parse_time(times[0])
@@ -131,7 +169,6 @@ def make_shift(d, times):
 
 
 def parse_rshift_dom(soup, page_year, page_month):
-    """R-Shift固有の shift/card DOM を優先して解析する。"""
     selectors = [
         ".staffpage-plan-list-shift",
         ".plan_list_shift",
@@ -139,29 +176,27 @@ def parse_rshift_dom(soup, page_year, page_month):
         ".shift_non_confirm",
     ]
     nodes = []
-    seen = set()
+    seen_nodes = set()
     for selector in selectors:
         for node in soup.select(selector):
-            ident = id(node)
-            if ident not in seen:
-                seen.add(ident)
+            if id(node) not in seen_nodes:
+                seen_nodes.add(id(node))
                 nodes.append(node)
 
+    date_candidates, index = explicit_date_candidates(soup, page_year, page_month)
     shifts = []
     seen_shift = set()
-    for node in nodes:
-        # 最も信頼できる時刻源は popup_working_time。なければシフト要素全体から抽出。
-        time_nodes = node.select(".popup_working_time")
-        time_values = []
-        for tn in time_nodes:
-            time_values.extend(re.findall(r"(?:[01]?\d|2[0-3])[:：][0-5]\d", node_metadata(tn)))
-        if not time_values:
-            time_values = re.findall(r"(?:[01]?\d|2[0-3])[:：][0-5]\d", node_metadata(node))
 
-        # 同じDOMを親子で二重に拾わないため、先頭2時刻だけを1シフトとして扱う。
+    for node in nodes:
+        time_values = []
+        for tn in node.select(".popup_working_time"):
+            time_values.extend(TIME_RE.findall(node_metadata(tn)))
+        if not time_values:
+            time_values = TIME_RE.findall(node_metadata(node))
         if len(time_values) < 2:
             continue
-        d = nearest_date(node, page_year, page_month)
+
+        d = nearest_date(node, date_candidates, index, page_year, page_month)
         shift = make_shift(d, time_values[:2])
         if shift and shift not in seen_shift:
             seen_shift.add(shift)
@@ -171,24 +206,25 @@ def parse_rshift_dom(soup, page_year, page_month):
 
 
 def parse_generic_dom(soup, page_year, page_month):
-    """R-ShiftのHTML変更に備えた汎用フォールバック。"""
     selectors = [
         "tr.shift-row", "table tr", "li", "div[class*='shift']",
         "div[class*='schedule']", "div[class*='work']", "td", "th",
     ]
+    date_candidates, index = explicit_date_candidates(soup, page_year, page_month)
     shifts = []
     seen_shift = set()
     seen_text = set()
+
     for selector in selectors:
         for node in soup.select(selector):
             text = clean(node.get_text(" ", strip=True))
             if not text or text in seen_text:
                 continue
             seen_text.add(text)
-            times = re.findall(r"(?:[01]?\d|2[0-3])[:：][0-5]\d", text)
+            times = TIME_RE.findall(text)
             if len(times) < 2:
                 continue
-            d = nearest_date(node, page_year, page_month) or extract_date(text, page_year, page_month)
+            d = nearest_date(node, date_candidates, index, page_year, page_month) or extract_date(text, page_year, page_month)
             shift = make_shift(d, times[:2])
             if shift and shift not in seen_shift:
                 seen_shift.add(shift)
@@ -199,38 +235,47 @@ def parse_generic_dom(soup, page_year, page_month):
 def parse_shift_rows(html):
     soup = BeautifulSoup(html, "html.parser")
     now = datetime.now(JST)
-    page_text = clean(soup.get_text(" ", strip=True))
 
-    year_match = re.search(r"(20\d{2})年", page_text)
+    # ページ全体の最初の「○月」は使用しない。隠し月セレクタ等で別月を拾う問題を防ぐ。
+    full_dates = []
+    for tag in soup.find_all(True):
+        if tag.find(True):
+            continue
+        text = node_metadata(tag)
+        if re.search(r"20\d{2}年|\d{1,2}[/-]\d{1,2}|\d{1,2}月\d{1,2}日", text):
+            full_dates.append(text)
+
+    year_match = re.search(r"(20\d{2})年", " ".join(full_dates))
     page_year = int(year_match.group(1)) if year_match else now.year
-    month_match = re.search(r"(\d{1,2})月", page_text)
-    page_month = int(month_match.group(1)) if month_match else now.month
+    md_matches = re.findall(r"(\d{1,2})[/-]\d{1,2}|(\d{1,2})月\d{1,2}日", " ".join(full_dates))
+    page_month = now.month
+    if md_matches:
+        page_month = int(next(a or b for a, b in md_matches))
 
     shifts = parse_rshift_dom(soup, page_year, page_month)
     if not shifts:
         shifts = parse_generic_dom(soup, page_year, page_month)
+
+    # 明らかな誤取得（全件が同一日なのに複数の明示日付がある）を検知する。
+    date_candidates, _ = explicit_date_candidates(soup, page_year, page_month)
+    unique_days = {start.date() for start, _ in shifts}
+    if len(shifts) >= 2 and len(date_candidates) >= 2 and len(unique_days) == 1:
+        raise RuntimeError("R-Shiftの日付関連付けが不自然です。複数の日付候補があるのに取得シフトが1日に集中したため、誤ったカレンダー生成を停止しました。")
+
     shifts.sort()
     return shifts
 
 
 def print_page_diagnostics(html):
-    """0件時に個人情報を出さず、R-Shift DOMの構造情報だけをActionsログへ出す。"""
     soup = BeautifulSoup(html, "html.parser")
     print("[diagnostic] title:", clean(soup.title.get_text()) if soup.title else "(none)")
     print("[diagnostic] forms:", len(soup.find_all("form")), "tables:", len(soup.find_all("table")))
-
     for selector in (".staffpage-plan-list-shift", ".plan_list_shift", ".popup_working_time", ".shift_non_confirm"):
         matches = soup.select(selector)
         print(f"[diagnostic] {selector}: {len(matches)}")
         for node in matches[:8]:
-            attrs = {k: v for k, v in node.attrs.items() if k != "class" and (k.startswith("data-") or k in {"id", "title", "name"})}
-            times = re.findall(r"(?:[01]?\d|2[0-3])[:：][0-5]\d", node_metadata(node))
-            date_found = extract_date(node_metadata(node), datetime.now(JST).year, datetime.now(JST).month)
-            child_classes = sorted({c for child in node.find_all(True) for c in child.get("class", []) if any(k in c.lower() for k in ("shift", "work", "date", "time"))})[:20]
-            print(f"[diagnostic]   tag={node.name} children={len(node.find_all(True))} attrs={list(attrs.keys())} times={len(times)} date={bool(date_found)} child_classes={child_classes}")
-
-    classes = sorted({c for tag in soup.find_all(True) for c in tag.get("class", []) if any(k in c.lower() for k in ("shift", "schedule", "work", "calendar"))})
-    print("[diagnostic] relevant classes:", classes[:80])
+            times = TIME_RE.findall(node_metadata(node))
+            print(f"[diagnostic]   tag={node.name} children={len(node.find_all(True))} times={len(times)} classes={node.get('class', [])}")
 
 
 def find_login_form(response):
@@ -255,11 +300,7 @@ def detect_login_fields(form):
         password = os.getenv("RSHIFT_PASSWORD_FIELD", "password")
 
     id_candidates = ("login_id", "userid", "user_id", "username", "login", "staff_id", "id")
-    user = None
-    for name in id_candidates:
-        if any(i.get("name") == name for i in inputs):
-            user = name
-            break
+    user = next((name for name in id_candidates if any(i.get("name") == name for i in inputs)), None)
     if not user:
         text_inputs = [i for i in inputs if i.get("type", "text").lower() in ("text", "email")]
         user = text_inputs[0].get("name") if text_inputs else os.getenv("RSHIFT_ID_FIELD", "login_id")
@@ -273,7 +314,6 @@ def login_and_fetch():
         "Accept-Language": "ja,en;q=0.8",
     })
 
-    # transactionid はログイン後に発行されるセッション情報なので固定値として保存しない。
     candidates = []
     if LOGIN_URL:
         candidates.append(LOGIN_URL)
@@ -325,7 +365,7 @@ def login_and_fetch():
         soup = BeautifulSoup(r.text, "html.parser")
         still_login = bool(soup.find("input", {"type": "password"}))
         if still_login and "ログアウト" not in r.text:
-            raise RuntimeError("R-Shiftへのログインに失敗した可能性があります。ログインフォームの認証結果を確認してください。")
+            raise RuntimeError("R-Shiftへのログインに失敗した可能性があります。")
         response = r
 
     targets = []
@@ -349,10 +389,10 @@ def build_calendar(shifts):
     cal.add("calscale", "GREGORIAN")
     cal.add("X-WR-CALNAME", "R-Shift シフト")
     cal.add("X-WR-TIMEZONE", "Asia/Tokyo")
+
     for start, end in shifts:
         event = Event()
-        uid = hashlib.sha256(f"rshift:{start.isoformat()}:{end.isoformat()}".encode()).hexdigest() + "@r-shift-sync"
-        event.add("uid", uid)
+        event.add("uid", hashlib.sha256(f"{start.isoformat()}|{end.isoformat()}".encode()).hexdigest() + "@r-shift-sync")
         event.add("summary", "アールシフト（出勤）")
         event.add("dtstart", start)
         event.add("dtend", end)
@@ -363,10 +403,15 @@ def build_calendar(shifts):
 
 def main():
     html = login_and_fetch()
-    shifts = parse_shift_rows(html)
+    try:
+        shifts = parse_shift_rows(html)
+    except RuntimeError:
+        print_page_diagnostics(html)
+        raise
     if not shifts:
         print_page_diagnostics(html)
-        raise RuntimeError("ログイン後のページからシフトを0件取得しました。R-Shift固有DOMの抽出処理を調整してください。")
+        raise RuntimeError("ログイン後のページからシフトを0件取得しました。")
+
     cal = build_calendar(shifts)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_bytes(cal.to_ical())
