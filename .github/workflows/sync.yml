@@ -34,59 +34,6 @@ jobs:
           test -n "$RSHIFT_PASSWORD" || { echo 'RSHIFT_PASSWORD が未設定です'; exit 1; }
           echo 'R-Shift認証情報: 設定済み'
 
-      - name: Inspect R-Shift DOM structure
-        env:
-          RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
-          RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
-          RSHIFT_BASE_URL: https://sgy5zm.rshift.jp
-          RSHIFT_ID_FIELD: login_id
-          RSHIFT_PASSWORD_FIELD: password
-        run: |
-          python - <<'PY'
-          import re
-          from bs4 import BeautifulSoup
-          import rshift_sync
-
-          html = rshift_sync.login_and_fetch()
-          soup = BeautifulSoup(html, 'html.parser')
-          print('[nav] month-related controls:')
-          for i, form in enumerate(soup.find_all('form')):
-              action = form.get('action') or ''
-              if 'monthly' in action or i in (0, 3):
-                  values = {}
-                  for name in ('mode', 'url', 'target_date_from', 'target_date_to', 'redirect_monthly_shift', 'sidemenu_target_date'):
-                      node = form.select_one(f'input[name="{name}"]')
-                      if node is not None:
-                          values[name] = node.get('value', '')
-                  print('[nav] form', i, 'method=', form.get('method'), 'action=', action, 'values=', values)
-          for tag in soup.find_all(['input', 'button', 'select']):
-              name = tag.get('name', '')
-              ident = tag.get('id', '')
-              text = tag.get_text(' ', strip=True)
-              if any(k in (name + ' ' + ident + ' ' + text).lower() for k in ('month', 'date', '前月', '次月', 'previous', 'next')):
-                  print('[nav] control', tag.name, 'name=', name, 'id=', ident, 'value=', tag.get('value',''), 'text=', text[:80])
-
-          selectors = ['.staffpage-plan-list-shift', '.plan_list_shift', '.popup_working_time', '.shift_non_confirm']
-          for selector in selectors:
-              nodes = soup.select(selector)
-              print(f'[dom] {selector}: {len(nodes)}')
-              for i, node in enumerate(nodes[:12]):
-                  parent = node.parent
-                  chain = []
-                  cur = node
-                  for _ in range(5):
-                      if cur is None: break
-                      chain.append(f'{cur.name}.{".".join(cur.get("class", []))}')
-                      cur = cur.parent
-                  sibling_classes = []
-                  if parent:
-                      for sib in parent.find_all(recursive=False):
-                          if sib is node: continue
-                          sibling_classes.append(f'{sib.name}.{".".join(sib.get("class", []))}')
-                  times = re.findall(r'(?:[01]?\d|2[0-3])[:：][0-5]\d', node.get_text(' ', strip=True))
-                  print(f'[dom]   {i}: chain={chain} siblings={sibling_classes[:12]} time_count={len(times)}')
-          PY
-
       - name: Fetch shifts and generate ICS
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
