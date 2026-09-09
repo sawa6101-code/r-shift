@@ -169,10 +169,7 @@ def parse_staff_month(html, year, month, staff_name):
     target_row = None
     for row in table.find_all("tr"):
         cells = row.find_all(["td", "th"])
-        if not cells:
-            continue
-        first_text = cells[0].get_text(" ", strip=True)
-        if staff_name in first_text:
+        if cells and staff_name in cells[0].get_text(" ", strip=True):
             target_row = row
             break
     if target_row is None:
@@ -181,26 +178,22 @@ def parse_staff_month(html, year, month, staff_name):
     cells = target_row.find_all(["td", "th"])
     if len(cells) < 2:
         raise RuntimeError("従業員シフト行の構造を認識できませんでした")
-    shift_cell = cells[1]
-    shift_cols = shift_cell.select(".staff_row.shift_col")
+    shift_cols = cells[1].select(".staff_row.shift_col")
     days = monthrange(year, month)[1]
-    print(f"[parser] staff={staff_name} shift_cols={len(shift_cols)}")
-    if len(shift_cols) < days * 4:
-        raise RuntimeError(f"月間シフト列数が不足しています: {len(shift_cols)} / {days * 4}")
+    print(f"[parser] shift_cols={len(shift_cols)} days={days}")
+    if len(shift_cols) < days:
+        raise RuntimeError(f"月間シフト列数が不足しています: {len(shift_cols)} / {days}")
 
     shifts = []
     seen = set()
-    for idx, node in enumerate(shift_cols):
+    for idx, node in enumerate(shift_cols[:days]):
         classes = set(node.get("class", []))
         if "working_shift" not in classes or "help_shift" in classes:
             continue
         times = TIME_RE.findall(node.get_text(" ", strip=True))
         if len(times) < 2:
             continue
-        day_index = idx // 4
-        if day_index >= days:
-            continue
-        d = date(year, month, day_index + 1)
+        d = date(year, month, idx + 1)
         shift = make_shift(d, times[:2])
         if shift and shift not in seen:
             seen.add(shift)
