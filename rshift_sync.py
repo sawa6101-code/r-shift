@@ -19,14 +19,9 @@ OUTPUT = Path(os.getenv("OUTPUT_ICS_PATH", "docs/shift_calendar.ics"))
 JST = timezone(timedelta(hours=9))
 
 
-def clean(text):
-    return re.sub(r"\s+", " ", text or "").strip()
-
-
 def parse_yyyymmdd(value):
-    value = clean(value)
-    if re.fullmatch(r"20\d{6}", value):
-        return datetime.strptime(value, "%Y%m%d").date()
+    if re.fullmatch(r"20\d{6}", (value or "").strip()):
+        return datetime.strptime(value.strip(), "%Y%m%d").date()
     return None
 
 
@@ -77,11 +72,11 @@ def login_session():
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/128 Safari/537.36",
         "Accept-Language": "ja,en;q=0.8",
     })
-    candidates = [u for u in (LOGIN_URL, BASE_URL + "/", BASE_URL + "/staff/", BASE_URL + "/staffpage/", BASE_URL + "/login/") if u]
+    urls = [u for u in (LOGIN_URL, BASE_URL + "/", BASE_URL + "/staff/", BASE_URL + "/staffpage/", BASE_URL + "/login/") if u]
     response = None
     form = None
     post_url = None
-    for url in dict.fromkeys(candidates):
+    for url in dict.fromkeys(urls):
         try:
             r = s.get(url, timeout=30, allow_redirects=True)
             if r.status_code >= 400:
@@ -117,10 +112,7 @@ def login_session():
 
 def fetch_staff_page():
     s, response = login_session()
-    targets = []
-    if STAFF_PAGE_URL:
-        targets.append(STAFF_PAGE_URL)
-    targets.extend([response.url, BASE_URL + "/staffpage/", BASE_URL + "/staff/"])
+    targets = ([STAFF_PAGE_URL] if STAFF_PAGE_URL else []) + [response.url, BASE_URL + "/staffpage/", BASE_URL + "/staff/"]
     page = None
     for target in dict.fromkeys(targets):
         try:
@@ -149,7 +141,6 @@ def fetch_staff_page():
     data["mode"] = data.get("mode") or "monthly"
     data["target_date_from"] = first
     data["target_date_to"] = last
-
     action = urljoin(page.url, monthly_form.get("action") or "/staffpage/monthly.php")
     r = s.post(action, data=data, timeout=30, allow_redirects=True)
     r.raise_for_status()
@@ -161,32 +152,27 @@ def fetch_staff_page():
 
 def parse_rshift_hidden_data(html):
     soup = BeautifulSoup(html, "html.parser")
-    forms = soup.find_all("form")
-    print(f"[parser] forms={len(forms)} buttons.plan_list_shift={len(soup.select('button.plan_list_shift'))}")
+    date_inputs = soup.select('input[name^="select_date"]')
+    print(f"[parser] select_date inputs={len(date_inputs)}")
     shifts = []
     seen = set()
-    button_class_counts = {}
-    for form in forms:
-        buttons = form.select("button.plan_list_shift")
-        if not buttons:
+    for date_input in date_inputs:
+        name = date_input.get("name", "")
+        suffix = name[len("select_date"):]
+        d = parse_yyyymmdd(date_input.get("value", ""))
+        if not d:
             continue
-        for idx, button in enumerate(buttons):
-            for cls in button.get("class", []):
-                button_class_counts[cls] = button_class_counts.get(cls, 0) + 1
-            def val(name):
-                node = form.select_one(f'input[name="{name}{idx}"]')
-                return node.get("value", "") if node else ""
-            d = parse_yyyymmdd(val("select_date"))
-            if not d:
-                continue
-            fh, fm, th, tm = val("from_hour"), val("from_minutes"), val("to_hour"), val("to_minutes")
-            if not all(v != "" for v in (fh, fm, th, tm)):
-                continue
-            shift = make_shift(d, fh, fm, th, tm)
-            if shift and shift not in seen:
-                seen.add(shift)
-                shifts.append(shift)
-    print(f"[parser] button_classes={button_class_counts}")
+        def val(prefix):
+            node = soup.select_one(f'input[name="{prefix}{suffix}"]')
+            return node.get("value", "") if node else ""
+        fh, fm, th, tm = val("from_hour"), val("from_minutes"), val("to_hour"), val("to_minutes")
+        if not all(v != "" for v in (fh, fm, th, tm)):
+            continue
+        shift = make_shift(d, fh, fm, th, tm)
+        if shift and shift not in seen:
+            seen.add(shift)
+            shifts.append(shift)
+    print(f"[parser] parsed shifts={len(shifts)}")
     return sorted(shifts)
 
 
@@ -206,8 +192,7 @@ def build_calendar(shifts):
     cal.add("X-WR-TIMEZONE", "Asia/Tokyo")
     for start, end in shifts:
         event = Event()
-        uid = hashlib.sha256(f"{start.isoformat()}|{end.isoformat()}".encode()).hexdigest() + "@r-shift-sync"
-        event.add("uid", uid)
+        event.add("uid", hashlib.sha256(f"{start.isoformat()}|{end.isoformat()}".encode()).hexdigest() + "@r-shift-sync")
         event.add("summary", "アールシフト（出勤）")
         event.add("dtstart", start)
         event.add("dtend", end)
@@ -219,9 +204,8 @@ def build_calendar(shifts):
 def main():
     html = fetch_staff_page()
     shifts = parse_shift_rows(html)
-    cal = build_calendar(shifts)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_bytes(cal.to_ical())
+    OUTPUT.write_bytes(build_calendar(shifts).to_ical())
     print(f"{len(shifts)}件のシフトを {OUTPUT} に出力しました。")
 
 
