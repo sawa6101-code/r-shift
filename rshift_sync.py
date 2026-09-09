@@ -22,7 +22,7 @@ def clean(text):
     return re.sub(r"\s+", " ", text or "").strip()
 
 
-def parse_date(value):
+def parse_date(value, default_year=None, default_month=None):
     value = clean(value).replace("年", "-").replace("月", "-").replace("日", "")
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"):
         try:
@@ -32,6 +32,18 @@ def parse_date(value):
     m = re.search(r"(20\d{2})[-/]?(\d{1,2})[-/]?(\d{1,2})", value)
     if m:
         return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+    m = re.search(r"(\d{1,2})[/-](\d{1,2})", value)
+    if m:
+        year = default_year or datetime.now(JST).year
+        return datetime(year, int(m.group(1)), int(m.group(2))).date()
+    m = re.search(r"(\d{1,2})月(\d{1,2})日", value)
+    if m:
+        year = default_year or datetime.now(JST).year
+        return datetime(year, int(m.group(1)), int(m.group(2))).date()
+    m = re.search(r"(\d{1,2})日", value)
+    if m and default_month:
+        year = default_year or datetime.now(JST).year
+        return datetime(year, default_month, int(m.group(1))).date()
     raise ValueError(f"日付を解析できません: {value}")
 
 
@@ -40,28 +52,64 @@ def parse_time(value):
     m = re.search(r"(\d{1,2})[:：](\d{2})", value)
     if not m:
         raise ValueError(f"時刻を解析できません: {value}")
-    return int(m.group(1)), int(m.group(2))
+    hour, minute = int(m.group(1)), int(m.group(2))
+    if hour > 23 or minute > 59:
+        raise ValueError(f"不正な時刻です: {value}")
+    return hour, minute
+
+
+def extract_date(text, page_year, page_month):
+    patterns = [
+        r"20\d{2}[/-]\d{1,2}[/-]\d{1,2}",
+        r"20\d{2}年\d{1,2}月\d{1,2}日",
+        r"\d{1,2}[/-]\d{1,2}",
+        r"\d{1,2}月\d{1,2}日",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text)
+        if m:
+            try:
+                return parse_date(m.group(0), page_year, page_month)
+            except ValueError:
+                pass
+    return None
 
 
 def parse_shift_rows(html):
     soup = BeautifulSoup(html, "html.parser")
-    rows = soup.select("tr.shift-row") or soup.select("table tr")
+    now = datetime.now(JST)
+    page_text = clean(soup.get_text(" ", strip=True))
+
+    year_match = re.search(r"(20\d{2})年", page_text)
+    page_year = int(year_match.group(1)) if year_match else now.year
+    month_match = re.search(r"(\d{1,2})月", page_text)
+    page_month = int(month_match.group(1)) if month_match else now.month
+
+    # R-Shiftの表示形式が変更されても拾えるよう、行・カード・セル単位で広く探索する。
+    candidates = []
+    selectors = [
+        "tr.shift-row", "table tr", "li", "div.shift", "div[class*='shift']",
+        "div[class*='schedule']", "div[class*='work']", "td", "th",
+    ]
+    seen = set()
+    for selector in selectors:
+        for node in soup.select(selector):
+            text = clean(node.get_text(" ", strip=True))
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            candidates.append(text)
+
     shifts = []
-    for row in rows:
-        cells = [clean(c.get_text(" ", strip=True)) for c in row.select("th,td")]
-        if len(cells) < 2:
-            continue
-        text = " | ".join(cells)
-        dates = re.findall(r"20\d{2}[/-]\d{1,2}[/-]\d{1,2}", text)
+    seen_shift = set()
+    for text in candidates:
         times = re.findall(r"\d{1,2}[:：]\d{2}", text)
-        if not dates:
-            m = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日", text)
-            if m:
-                dates = [f"{m.group(1)}-{m.group(2)}-{m.group(3)}"]
-        if not dates or len(times) < 2:
+        if len(times) < 2:
+            continue
+        d = extract_date(text, page_year, page_month)
+        if d is None:
             continue
         try:
-            d = parse_date(dates[0])
             sh, sm = parse_time(times[0])
             eh, em = parse_time(times[1])
         except ValueError:
@@ -70,8 +118,31 @@ def parse_shift_rows(html):
         end = datetime(d.year, d.month, d.day, eh, em, tzinfo=JST)
         if end <= start:
             end += timedelta(days=1)
-        shifts.append((start, end))
+        key = (start, end)
+        if key not in seen_shift:
+            seen_shift.add(key)
+            shifts.append(key)
+
+    shifts.sort()
     return shifts
+
+
+def print_page_diagnostics(html):
+    """0件時に個人情報を極力出さず、HTML構造だけをActionsログへ出す。"""
+    soup = BeautifulSoup(html, "html.parser")
+    print("[diagnostic] title:", clean(soup.title.get_text()) if soup.title else "(none)")
+    print("[diagnostic] forms:", len(soup.find_all("form")), "tables:", len(soup.find_all("table")))
+    for i, table in enumerate(soup.find_all("table")[:10], 1):
+        classes = " ".join(table.get("class", []))
+        tid = table.get("id", "")
+        rows = table.find_all("tr")
+        print(f"[diagnostic] table#{i} id={tid!r} class={classes!r} rows={len(rows)}")
+        for row in rows[:3]:
+            cells = [clean(c.get_text(" ", strip=True)) for c in row.find_all(["th", "td"])]
+            # 値は出さず、セル数と時刻/日付の有無だけ表示する。
+            print(f"[diagnostic]   row cells={len(cells)} has_date={bool(extract_date(' | '.join(cells), datetime.now(JST).year, datetime.now(JST).month))} times={len(re.findall(r'\\d{1,2}[:：]\\d{2}', ' | '.join(cells)))}")
+    classes = sorted({c for tag in soup.find_all(True) for c in tag.get("class", []) if any(k in c.lower() for k in ("shift", "schedule", "work", "calendar"))})
+    print("[diagnostic] relevant classes:", classes[:80])
 
 
 def find_login_form(response):
@@ -115,7 +186,6 @@ def login_and_fetch():
     })
 
     # transactionid はログイン後に発行されるセッション情報なので固定値として保存しない。
-    # テナントURLから実際のログインフォームを自動検出する。
     candidates = []
     if LOGIN_URL:
         candidates.append(LOGIN_URL)
@@ -207,7 +277,8 @@ def main():
     html = login_and_fetch()
     shifts = parse_shift_rows(html)
     if not shifts:
-        raise RuntimeError("ログイン後のページからシフトを0件取得しました。実際のシフト表HTMLに合わせて抽出処理を調整する必要があります。")
+        print_page_diagnostics(html)
+        raise RuntimeError("ログイン後のページからシフトを0件取得しました。Actionsログのdiagnostic情報を基に抽出処理を調整します。")
     cal = build_calendar(shifts)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_bytes(cal.to_ical())
