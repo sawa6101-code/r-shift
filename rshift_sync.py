@@ -16,7 +16,6 @@ STAFF_PAGE_URL = os.getenv("RSHIFT_STAFF_PAGE_URL", "").strip()
 USER_ID = os.environ["RSHIFT_USER_ID"]
 PASSWORD = os.environ["RSHIFT_PASSWORD"]
 OUTPUT = Path(os.getenv("OUTPUT_ICS_PATH", "docs/shift_calendar.ics"))
-HOME_LOCATION = os.getenv("RSHIFT_HOME_LOCATION", "自宅").strip() or "自宅"
 JST = timezone(timedelta(hours=9))
 TIME_RE = re.compile(r"(?:[01]?\d|2[0-3])[:：][0-5]\d")
 
@@ -225,8 +224,7 @@ def parse_staff_month(html, year, month, staff_name):
         if "help_shift" in classes:
             shop = extract_help_shop(node)
             summary = f"応援：{shop}" if shop else "応援"
-            location = shop or "応援先"
-            item = (d, d + timedelta(days=1), summary, location, True)
+            item = (d, d + timedelta(days=1), summary, True)
         else:
             times = TIME_RE.findall(node.get_text(" ", strip=True))
             if len(times) < 2:
@@ -234,9 +232,9 @@ def parse_staff_month(html, year, month, staff_name):
             shift = make_shift(d, times[:2])
             if not shift:
                 continue
-            item = (shift[0], shift[1], "店舗勤務", None, False)
+            item = (shift[0], shift[1], "店舗勤務", False)
 
-        key = (item[0], item[1], item[2], item[3], item[4])
+        key = (item[0], item[1], item[2], item[3])
         if key not in seen:
             seen.add(key)
             shifts.append(item)
@@ -255,20 +253,18 @@ def build_calendar(shifts):
     cal.add("calscale", "GREGORIAN")
     cal.add("X-WR-CALNAME", "R-Shift シフト")
     cal.add("X-WR-TIMEZONE", "Asia/Tokyo")
-    for start, end, summary, location, all_day in shifts:
+    for start, end, summary, all_day in shifts:
         event = Event()
-        uid_source = f"{start.isoformat()}|{end.isoformat()}|{summary}|{location or ''}|{all_day}"
+        uid_source = f"{start.isoformat()}|{end.isoformat()}|{summary}|{all_day}"
         event.add("uid", hashlib.sha256(uid_source.encode()).hexdigest() + "@r-shift-sync")
         event.add("summary", summary)
-        event.add("dtstart", start)
-        event.add("dtend", end)
+        if all_day:
+            event.add("dtstart", start)
+            event.add("dtend", end)
+        else:
+            event.add("dtstart", start)
+            event.add("dtend", end)
         event.add("dtstamp", datetime.now(timezone.utc))
-        event.add("X-RSHIFT-ORIGIN", HOME_LOCATION)
-        if location:
-            event.add("location", location)
-            event.add("X-RSHIFT-DESTINATION", location)
-            event.add("X-APPLE-TRAVEL-ADVISORY-BEHAVIOR", "AUTOMATIC")
-            event.add("description", f"出発地点：{HOME_LOCATION}")
         cal.add_component(event)
     return cal
 
@@ -280,7 +276,7 @@ def main():
         raise RuntimeError("対象月の確定勤務シフトを0件取得しました")
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_bytes(build_calendar(shifts).to_ical())
-    help_count = sum(1 for _, _, summary, _, _ in shifts if summary.startswith("応援"))
+    help_count = sum(1 for _, _, summary, _ in shifts if summary.startswith("応援"))
     print(f"{len(shifts)}件のシフト（うち応援{help_count}件）を {OUTPUT} に出力しました。")
 
 
