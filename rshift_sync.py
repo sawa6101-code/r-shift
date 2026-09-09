@@ -1,5 +1,6 @@
 import os
 import re
+import hashlib
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.parse import urljoin
@@ -96,7 +97,6 @@ def explicit_date_candidates(soup, default_year, default_month):
     candidates = []
     seen = set()
     for tag in tags:
-        # 日付ラベルは葉要素を優先し、親要素に複数の日付が含まれる場合の誤認を防ぐ。
         if tag.find(True):
             continue
         d = extract_date(node_metadata(tag), default_year, default_month)
@@ -108,7 +108,6 @@ def explicit_date_candidates(soup, default_year, default_month):
 
 def date_from_related_structure(node, default_year, default_month):
     """同じ行・カード・セル群に属する明示的な日付を優先して取得する。"""
-    # まず同一テーブル行を確認する。
     tr = node.find_parent("tr")
     if tr:
         found = []
@@ -121,7 +120,6 @@ def date_from_related_structure(node, default_year, default_month):
         if len(found) == 1:
             return found[0]
 
-    # 次に近い祖先カードを確認する。複数日付を含む大きなコンテナは除外する。
     current = node
     for _ in range(8):
         if current is None:
@@ -145,8 +143,6 @@ def nearest_date(node, candidates, index, default_year, default_month):
     d = date_from_related_structure(node, default_year, default_month)
     if d:
         return d
-
-    # DOM上で最も近い明示的日付ラベルを使う。
     pos = index.get(id(node))
     if pos is None or not candidates:
         return None
@@ -236,7 +232,6 @@ def parse_shift_rows(html):
     soup = BeautifulSoup(html, "html.parser")
     now = datetime.now(JST)
 
-    # ページ全体の最初の「○月」は使用しない。隠し月セレクタ等で別月を拾う問題を防ぐ。
     full_dates = []
     for tag in soup.find_all(True):
         if tag.find(True):
@@ -256,7 +251,6 @@ def parse_shift_rows(html):
     if not shifts:
         shifts = parse_generic_dom(soup, page_year, page_month)
 
-    # 明らかな誤取得（全件が同一日なのに複数の明示日付がある）を検知する。
     date_candidates, _ = explicit_date_candidates(soup, page_year, page_month)
     unique_days = {start.date() for start, _ in shifts}
     if len(shifts) >= 2 and len(date_candidates) >= 2 and len(unique_days) == 1:
