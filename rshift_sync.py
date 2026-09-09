@@ -5,6 +5,7 @@ from calendar import monthrange
 from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 from urllib.parse import urljoin
+from collections import Counter
 
 import requests
 from bs4 import BeautifulSoup
@@ -165,7 +166,6 @@ def parse_staff_month(html, year, month, staff_name):
     table = soup.select_one("table.staffpage-monthly-table")
     if table is None:
         raise RuntimeError("月間シフト表を見つけられませんでした")
-
     target_row = None
     for row in table.find_all("tr"):
         cells = row.find_all(["td", "th"])
@@ -174,16 +174,15 @@ def parse_staff_month(html, year, month, staff_name):
             break
     if target_row is None:
         raise RuntimeError("ログイン中の従業員の月間シフト行を特定できませんでした")
-
     cells = target_row.find_all(["td", "th"])
     if len(cells) < 2:
         raise RuntimeError("従業員シフト行の構造を認識できませんでした")
     shift_cols = cells[1].select(".staff_row.shift_col")
     days = monthrange(year, month)[1]
     print(f"[parser] shift_cols={len(shift_cols)} days={days}")
+    print(f"[parser] state_classes={Counter(tuple(x.get('class', [])) for x in shift_cols)}")
     if len(shift_cols) < days:
         raise RuntimeError(f"月間シフト列数が不足しています: {len(shift_cols)} / {days}")
-
     shifts = []
     seen = set()
     for idx, node in enumerate(shift_cols[:days]):
