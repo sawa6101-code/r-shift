@@ -16,6 +16,7 @@ STAFF_PAGE_URL = os.getenv("RSHIFT_STAFF_PAGE_URL", "").strip()
 USER_ID = os.environ["RSHIFT_USER_ID"]
 PASSWORD = os.environ["RSHIFT_PASSWORD"]
 OUTPUT = Path(os.getenv("OUTPUT_ICS_PATH", "docs/shift_calendar.ics"))
+HOME_LOCATION = os.getenv("RSHIFT_HOME_LOCATION", "自宅").strip() or "自宅"
 JST = timezone(timedelta(hours=9))
 TIME_RE = re.compile(r"(?:[01]?\d|2[0-3])[:：][0-5]\d")
 
@@ -160,6 +161,32 @@ def fetch_staff_page():
     return r.text, year, month, staff_name
 
 
+def extract_help_shop(node):
+    """R-Shiftの応援セルから応援先店舗名を取得する。"""
+    # R-Shiftでは応援先が help_shop 要素として表示されるため、まずそこを優先する。
+    for shop_node in node.select(".help_shop"):
+        text = shop_node.get_text(" ", strip=True)
+        if text:
+            return text
+        for attr in ("data-shop-name", "data-store-name", "title", "aria-label"):
+            value = shop_node.get(attr, "").strip()
+            if value:
+                return value
+
+    # HTMLの属性として店舗名を持つ実装差にも対応する。
+    for attr in ("data-shop-name", "data-store-name", "data-help-shop", "title", "aria-label"):
+        value = node.get(attr, "").strip()
+        if value:
+            return value
+
+    # 最終フォールバック。時刻文字列と「応援」表記を除いて店舗名らしい文字列を抽出する。
+    text = node.get_text(" ", strip=True)
+    text = TIME_RE.sub(" ", text)
+    text = re.sub(r"\b応援\b", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or None
+
+
 def parse_staff_month(html, year, month, staff_name):
     soup = BeautifulSoup(html, "html.parser")
     table = soup.select_one("table.staffpage-monthly-table")
@@ -184,17 +211,32 @@ def parse_staff_month(html, year, month, staff_name):
     seen = set()
     for idx, node in enumerate(shift_cols[:days]):
         classes = set(node.get("class", []))
-        if "working_shift" not in classes or "help_shift" in classes:
+        if "holiday_shift" in classes:
+            continue
+        if "working_shift" not in classes:
             continue
         times = TIME_RE.findall(node.get_text(" ", strip=True))
         if len(times) < 2:
             continue
         d = date(year, month, idx + 1)
         shift = make_shift(d, times[:2])
-        if shift and shift not in seen:
-            seen.add(shift)
-            shifts.append(shift)
-    return sorted(shifts)
+        if not shift:
+            continue
+
+        if "help_shift" in classes:
+            shop = extract_help_shop(node)
+            summary = f"応援：{shop}" if shop else "応援"
+            location = shop or "応援先"
+        else:
+            summary = "アールシフト（出勤）"
+            location = None
+
+        item = (shift[0], shift[1], summary, location)
+        key = (shift[0], shift[1], summary, location)
+        if key not in seen:
+            seen.add(key)
+            shifts.append(item)
+    return sorted(shifts, key=lambda x: x[0])
 
 
 def build_calendar(shifts):
@@ -204,13 +246,21 @@ def build_calendar(shifts):
     cal.add("calscale", "GREGORIAN")
     cal.add("X-WR-CALNAME", "R-Shift シフト")
     cal.add("X-WR-TIMEZONE", "Asia/Tokyo")
-    for start, end in shifts:
+    for start, end, summary, location in shifts:
         event = Event()
-        event.add("uid", hashlib.sha256(f"{start.isoformat()}|{end.isoformat()}".encode()).hexdigest() + "@r-shift-sync")
-        event.add("summary", "アールシフト（出勤）")
+        uid_source = f"{start.isoformat()}|{end.isoformat()}|{summary}|{location or ''}"
+        event.add("uid", hashlib.sha256(uid_source.encode()).hexdigest() + "@r-shift-sync")
+        event.add("summary", summary)
         event.add("dtstart", start)
         event.add("dtend", end)
         event.add("dtstamp", datetime.now(timezone.utc))
+        if location:
+            # カレンダー上の目的地は応援先店舗。iOS等で場所として扱えるようLOCATIONに設定。
+            event.add("location", location)
+            # iCalendar標準では出発地点をイベントごとに保持する項目がないため、固定出発地点を拡張属性として保存。
+            event.add("X-RSHIFT-ORIGIN", HOME_LOCATION)
+            event.add("X-RSHIFT-DESTINATION", location)
+            event.add("X-APPLE-TRAVEL-ADVISORY-BEHAVIOR", "AUTOMATIC")
         cal.add_component(event)
     return cal
 
@@ -222,7 +272,8 @@ def main():
         raise RuntimeError("対象月の確定勤務シフトを0件取得しました")
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_bytes(build_calendar(shifts).to_ical())
-    print(f"{len(shifts)}件のシフトを {OUTPUT} に出力しました。")
+    help_count = sum(1 for _, _, summary, _ in shifts if summary.startswith("応援"))
+    print(f"{len(shifts)}件のシフト（うち応援{help_count}件）を {OUTPUT} に出力しました。")
 
 
 if __name__ == "__main__":
