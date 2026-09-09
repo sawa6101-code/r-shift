@@ -14,22 +14,19 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt
       - name: Validate secrets
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
           RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
         run: |
-          test -n "$RSHIFT_USER_ID" || exit 1
-          test -n "$RSHIFT_PASSWORD" || exit 1
-      - name: Inspect current employee row
+          test -n "$RSHIFT_USER_ID"
+          test -n "$RSHIFT_PASSWORD"
+      - name: Inspect employee row links
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
           RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
@@ -44,11 +41,12 @@ jobs:
           soup = BeautifulSoup(html, 'html.parser')
           table = soup.select_one('table.staffpage-monthly-table')
           rows = table.find_all('tr') if table else []
-          for i, row in enumerate(rows[3:8], start=3):
-              cells = row.find_all(['td','th'])
-              print('[row]', i, 'attrs=', row.attrs)
-              for ci, cell in enumerate(cells[:8]):
-                  print('[cell]', ci, 'attrs=', cell.attrs, 'text=', cell.get_text(' ', strip=True)[:80])
+          for i in (3,4,5):
+              row = rows[i]
+              cell = row.find_all(['td','th'])[0]
+              print('[row]', i, 'links=', [(a.get_text(' ',strip=True)[:30], a.get('href'), a.get('onclick')) for a in cell.find_all('a')])
+              print('[row]', i, 'inputs=', [(x.get('name'), x.get('value',''), x.get('type')) for x in cell.find_all('input')])
+              print('[row]', i, 'buttons=', [(b.get('name'), b.get('value',''), b.get('onclick')) for b in cell.find_all('button')])
           PY
       - name: Fetch shifts and generate ICS
         env:
