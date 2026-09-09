@@ -161,25 +161,36 @@ def fetch_staff_page():
     return r.text, year, month, staff_name
 
 
+def normalize_shop_name(text):
+    text = re.sub(r"\s+", " ", text.strip())
+    if not text:
+        return None
+    parts = text.split(" ")
+    if len(parts) % 2 == 0:
+        half = len(parts) // 2
+        if parts[:half] == parts[half:]:
+            return " ".join(parts[:half])
+    return text
+
+
 def extract_help_shop(node):
     """R-Shiftの応援セルから応援先店舗名を取得する。"""
     for shop_node in node.select(".help_shop"):
-        text = shop_node.get_text(" ", strip=True)
+        text = normalize_shop_name(shop_node.get_text(" ", strip=True))
         if text:
             return text
         for attr in ("data-shop-name", "data-store-name", "title", "aria-label"):
-            value = shop_node.get(attr, "").strip()
+            value = normalize_shop_name(shop_node.get(attr, ""))
             if value:
                 return value
     for attr in ("data-shop-name", "data-store-name", "data-help-shop", "title", "aria-label"):
-        value = node.get(attr, "").strip()
+        value = normalize_shop_name(node.get(attr, ""))
         if value:
             return value
     text = node.get_text(" ", strip=True)
     text = TIME_RE.sub(" ", text)
     text = text.replace("応援", " ")
-    text = re.sub(r"\s+", " ", text).strip()
-    return text or None
+    return normalize_shop_name(text)
 
 
 def parse_staff_month(html, year, month, staff_name):
@@ -209,12 +220,9 @@ def parse_staff_month(html, year, month, staff_name):
         classes = set(node.get("class", []))
         if "holiday_shift" in classes or "working_shift" not in classes:
             continue
-
         d = date(year, month, idx + 1)
 
         if "help_shift" in classes:
-            # 応援セルには店舗名だけが表示され、勤務時刻は月間スタッフ行には存在しない。
-            # 時刻を推測せず、当日の終日イベントとして出力する。
             shop = extract_help_shop(node)
             summary = f"応援：{shop}" if shop else "応援"
             location = shop or "応援先"
