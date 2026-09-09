@@ -1,6 +1,7 @@
 import os
 import re
 import hashlib
+import time
 from calendar import monthrange
 from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
@@ -15,9 +16,14 @@ LOGIN_URL = os.getenv("RSHIFT_LOGIN_URL", "").strip()
 STAFF_PAGE_URL = os.getenv("RSHIFT_STAFF_PAGE_URL", "").strip()
 USER_ID = os.environ["RSHIFT_USER_ID"]
 PASSWORD = os.environ["RSHIFT_PASSWORD"]
+HOME_ADDRESS = os.getenv("RSHIFT_HOME_ADDRESS", "").strip()
 OUTPUT = Path(os.getenv("OUTPUT_ICS_PATH", "docs/shift_calendar.ics"))
 JST = timezone(timedelta(hours=9))
 TIME_RE = re.compile(r"(?:[01]?\d|2[0-3])[:：][0-5]\d")
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+GEOCODE_CACHE = {}
+LAST_GEOCODE_REQUEST = 0.0
+TRAVEL_BUFFER_MINUTES = 15
 
 
 def target_month():
@@ -234,7 +240,7 @@ def parse_staff_month(html, year, month, staff_name):
             shift = make_shift(d, times[:2])
             if not shift:
                 continue
-            item = (shift[0], shift[1], "店舗勤務", None, False)
+            item = (shift[0], shift[1], "店舗勤務", "岩成台店", False)
 
         key = (item[0], item[1], item[2], item[3])
         if key not in seen:
@@ -244,6 +250,130 @@ def parse_staff_month(html, year, month, staff_name):
     return sorted(shifts, key=lambda item: item[0])
 
 
+def geocode(query):
+    """Nominatimを利用したジオコード。実行中キャッシュと最低1秒間隔を使用する。"""
+    global LAST_GEOCODE_REQUEST
+    if query in GEOCODE_CACHE:
+        return GEOCODE_CACHE[query]
+
+    wait = 1.05 - (time.monotonic() - LAST_GEOCODE_REQUEST)
+    if wait > 0:
+        time.sleep(wait)
+
+    response = requests.get(
+        NOMINATIM_URL,
+        params={"q": query, "format": "json", "limit": 1, "countrycodes": "jp"},
+        headers={"User-Agent": "r-shift-sync/1.2 (GitHub Actions)"},
+        timeout=30,
+    )
+    LAST_GEOCODE_REQUEST = time.monotonic()
+    response.raise_for_status()
+    results = response.json()
+    coords = None
+    if results:
+        coords = (float(results[0]["lon"]), float(results[0]["lat"]))
+    GEOCODE_CACHE[query] = coords
+    return coords
+
+
+def get_shop_coordinates(shop):
+    aliases = {
+        "岩成台店": [
+            "スギ薬局 岩成台店 愛知県春日井市岩成台5-2-7",
+            "愛知県春日井市岩成台5-2-7",
+        ],
+        "ことぶき店": [
+            "スギ薬局 ことぶき店 愛知県春日井市ことぶき町8-3",
+            "愛知県春日井市ことぶき町8-3",
+        ],
+        "篠木店": [
+            "スギ薬局 篠木店 愛知県春日井市篠木町7-45-23",
+            "愛知県春日井市篠木町7-45-23",
+        ],
+        "大手店": [
+            "スギ薬局 大手店 愛知県春日井市大手町3-21-6",
+            "愛知県春日井市大手町3-21-6",
+        ],
+        "高蔵寺店": [
+            "スギ薬局 高蔵寺店 愛知県春日井市高蔵寺町1-46",
+            "愛知県春日井市高蔵寺町1-46",
+        ],
+    }
+    queries = aliases.get(shop, []) + [
+        f"スギ薬局 {shop} 愛知県春日井市",
+        f"スギ薬局 {shop} 愛知県",
+        f"{shop} 愛知県春日井市",
+        f"{shop} 愛知県",
+    ]
+    seen = set()
+    for query in queries:
+        if query in seen:
+            continue
+        seen.add(query)
+        try:
+            coords = geocode(query)
+        except requests.RequestException as exc:
+            print(f"店舗位置検索をスキップ: {query} ({exc})")
+            continue
+        if coords:
+            return coords
+    return None
+
+
+def route_minutes(origin, destination):
+    response = requests.get(
+        f"https://router.project-osrm.org/route/v1/driving/{origin[0]},{origin[1]};{destination[0]},{destination[1]}",
+        params={"overview": "false"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    data = response.json()
+    if data.get("code") != "Ok":
+        return None
+    routes = data.get("routes", [])
+    if not routes:
+        return None
+    return max(1, round(routes[0]["duration"] / 60))
+
+
+def add_travel_events(cal, shifts):
+    if not HOME_ADDRESS:
+        raise RuntimeError("RSHIFT_HOME_ADDRESS が未設定です。GitHub Secretsに自宅住所を登録してください")
+
+    origin = geocode(HOME_ADDRESS)
+    if not origin:
+        raise RuntimeError("自宅住所を地図上の地点に変換できませんでした")
+
+    for start, end, summary, location, is_help in shifts:
+        shop = location if is_help else "岩成台店"
+        destination = get_shop_coordinates(shop)
+        if not destination:
+            print(f"店舗位置を取得できないため出勤移動を省略: {shop}")
+            continue
+        try:
+            minutes = route_minutes(origin, destination)
+        except requests.RequestException as exc:
+            print(f"移動時間計算を省略: {shop} ({exc})")
+            continue
+        if minutes is None:
+            print(f"ルートが取得できないため出勤移動を省略: {shop}")
+            continue
+
+        total_minutes = minutes + TRAVEL_BUFFER_MINUTES
+        travel_start = start - timedelta(minutes=total_minutes)
+        event = Event()
+        uid_source = f"travel|{travel_start.isoformat()}|{start.isoformat()}|{shop}"
+        event.add("uid", hashlib.sha256(uid_source.encode()).hexdigest() + "@r-shift-sync")
+        event.add("summary", "出勤移動")
+        event.add("dtstart", travel_start)
+        event.add("dtend", start)
+        event.add("location", shop)
+        event.add("description", f"自宅→{shop}: 推定{minutes}分 + 余裕{TRAVEL_BUFFER_MINUTES}分")
+        event.add("dtstamp", datetime.now(timezone.utc))
+        cal.add_component(event)
+        print(f"出勤移動: {shop} 推定{minutes}分 + 余裕{TRAVEL_BUFFER_MINUTES}分")
+
+
 def build_calendar(shifts):
     cal = Calendar()
     cal.add("prodid", "-//r-shift-sync//JP")
@@ -251,6 +381,8 @@ def build_calendar(shifts):
     cal.add("calscale", "GREGORIAN")
     cal.add("X-WR-CALNAME", "R-Shift シフト")
     cal.add("X-WR-TIMEZONE", "Asia/Tokyo")
+
+    add_travel_events(cal, shifts)
 
     for start, end, summary, location, is_help in shifts:
         event = Event()
