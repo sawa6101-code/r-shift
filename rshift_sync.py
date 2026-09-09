@@ -5,7 +5,6 @@ from calendar import monthrange
 from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 from urllib.parse import urljoin
-from collections import Counter
 
 import requests
 from bs4 import BeautifulSoup
@@ -179,8 +178,6 @@ def parse_staff_month(html, year, month, staff_name):
         raise RuntimeError("従業員シフト行の構造を認識できませんでした")
     shift_cols = cells[1].select(".staff_row.shift_col")
     days = monthrange(year, month)[1]
-    print(f"[parser] shift_cols={len(shift_cols)} days={days}")
-    print(f"[parser] state_classes={Counter(tuple(x.get('class', [])) for x in shift_cols)}")
     if len(shift_cols) < days:
         raise RuntimeError(f"月間シフト列数が不足しています: {len(shift_cols)} / {days}")
     shifts = []
