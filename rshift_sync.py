@@ -52,11 +52,9 @@ def parse_shift_rows(html):
         if len(cells) < 2:
             continue
         text = " | ".join(cells)
-        if any(x in text for x in ("日付", "曜日", "合計", "勤務時間")) and not re.search(r"20\d{2}", text):
-            continue
         dates = re.findall(r"20\d{2}[/-]\d{1,2}[/-]\d{1,2}", text)
         times = re.findall(r"\d{1,2}[:：]\d{2}", text)
-        if not dates or len(times) < 2:
+        if not dates:
             m = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日", text)
             if m:
                 dates = [f"{m.group(1)}-{m.group(2)}-{m.group(3)}"]
@@ -78,11 +76,35 @@ def parse_shift_rows(html):
 
 def find_login_form(response):
     soup = BeautifulSoup(response.text, "html.parser")
-    form = soup.find("form")
-    if not form:
-        return None, None
-    action = form.get("action") or response.url
-    return form, urljoin(response.url, action)
+    forms = soup.find_all("form")
+    for form in forms:
+        inputs = form.select("input[name]")
+        if any(i.get("type", "").lower() == "password" for i in inputs):
+            action = form.get("action") or response.url
+            return form, urljoin(response.url, action)
+    if forms:
+        form = forms[0]
+        action = form.get("action") or response.url
+        return form, urljoin(response.url, action)
+    return None, None
+
+
+def detect_login_fields(form):
+    inputs = form.select("input[name]")
+    password = next((i["name"] for i in inputs if i.get("type", "").lower() == "password"), None)
+    if not password:
+        password = os.getenv("RSHIFT_PASSWORD_FIELD", "password")
+
+    id_candidates = ("login_id", "userid", "user_id", "username", "login", "staff_id", "id")
+    user = None
+    for name in id_candidates:
+        if any(i.get("name") == name for i in inputs):
+            user = name
+            break
+    if not user:
+        text_inputs = [i for i in inputs if i.get("type", "text").lower() in ("text", "email")]
+        user = text_inputs[0].get("name") if text_inputs else os.getenv("RSHIFT_ID_FIELD", "login_id")
+    return user, password
 
 
 def login_and_fetch():
@@ -92,14 +114,13 @@ def login_and_fetch():
         "Accept-Language": "ja,en;q=0.8",
     })
 
-    # R-ShiftのログインURLは企業・環境ごとに異なるため、固定の
-    # /staff/login/ を前提にせず、まずテナントURL自身へアクセスして
-    # リダイレクト先のログインフォームを自動検出する。
+    # transactionid はログイン後に発行されるセッション情報なので固定値として保存しない。
+    # テナントURLから実際のログインフォームを自動検出する。
     candidates = []
     if LOGIN_URL:
         candidates.append(LOGIN_URL)
-    candidates.append(BASE_URL + "/")
     candidates.extend([
+        BASE_URL + "/",
         BASE_URL + "/staff/",
         BASE_URL + "/staffpage/",
         BASE_URL + "/login/",
@@ -120,8 +141,6 @@ def login_and_fetch():
                 errors.append(f"{url} -> HTTP {r.status_code}")
                 continue
             f, action = find_login_form(r)
-            # ログインフォームを見つけたら採用。フォームがない場合も、
-            # 既にログイン済み画面の可能性があるため後で判定する。
             if f is not None:
                 response, form, post_url = r, f, action
                 break
@@ -137,19 +156,20 @@ def login_and_fetch():
     if form is not None:
         data = {}
         for inp in form.select("input[name]"):
-            if inp.get("type", "").lower() not in {"submit", "button", "image"}:
+            typ = inp.get("type", "").lower()
+            if typ not in {"submit", "button", "image", "password"}:
                 data[inp["name"]] = inp.get("value", "")
-        id_field = os.getenv("RSHIFT_ID_FIELD", "login_id")
-        password_field = os.getenv("RSHIFT_PASSWORD_FIELD", "password")
+        id_field, password_field = detect_login_fields(form)
         data[id_field] = USER_ID
         data[password_field] = PASSWORD
         r = s.post(post_url, data=data, timeout=30, allow_redirects=True)
         r.raise_for_status()
-        if "ログイン" in r.text and "パスワード" in r.text and "ログアウト" not in r.text:
-            raise RuntimeError("R-Shiftへのログインに失敗した可能性があります。ID/パスワードまたはフォーム項目を確認してください。")
+        soup = BeautifulSoup(r.text, "html.parser")
+        still_login = bool(soup.find("input", {"type": "password"}))
+        if still_login and "ログアウト" not in r.text:
+            raise RuntimeError("R-Shiftへのログインに失敗した可能性があります。ログインフォームの認証結果を確認してください。")
         response = r
 
-    # 明示されたスタッフページがあれば優先。未指定ならログイン後のURLを起点に探索。
     targets = []
     if STAFF_PAGE_URL:
         targets.append(STAFF_PAGE_URL)
@@ -187,7 +207,7 @@ def main():
     html = login_and_fetch()
     shifts = parse_shift_rows(html)
     if not shifts:
-        raise RuntimeError("シフトを0件取得しました。ログインは通過しましたが、実サイトのHTML構造に合わせてシフト抽出処理を調整する必要があります。")
+        raise RuntimeError("ログイン後のページからシフトを0件取得しました。実際のシフト表HTMLに合わせて抽出処理を調整する必要があります。")
     cal = build_calendar(shifts)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_bytes(cal.to_ical())
