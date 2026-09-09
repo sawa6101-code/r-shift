@@ -15,10 +15,10 @@ LOGIN_URL = os.getenv("RSHIFT_LOGIN_URL", "").strip()
 STAFF_PAGE_URL = os.getenv("RSHIFT_STAFF_PAGE_URL", "").strip()
 USER_ID = os.environ["RSHIFT_USER_ID"]
 PASSWORD = os.environ["RSHIFT_PASSWORD"]
+HOME_ADDRESS = os.getenv("RSHIFT_HOME_ADDRESS", "").strip()
 OUTPUT = Path(os.getenv("OUTPUT_ICS_PATH", "docs/shift_calendar.ics"))
 JST = timezone(timedelta(hours=9))
 TIME_RE = re.compile(r"(?:[01]?\d|2[0-3])[:：][0-5]\d")
-HOME_LOCATION = "自宅"
 
 
 def target_month():
@@ -227,7 +227,7 @@ def parse_staff_month(html, year, month, staff_name):
             summary = f"{shop}応援" if shop else "応援"
             start = datetime(d.year, d.month, d.day, 9, 0, tzinfo=JST)
             end = datetime(d.year, d.month, d.day, 20, 0, tzinfo=JST)
-            item = (start, end, summary, shop)
+            item = (start, end, summary, shop, True)
         else:
             times = TIME_RE.findall(node.get_text(" ", strip=True))
             if len(times) < 2:
@@ -235,18 +235,87 @@ def parse_staff_month(html, year, month, staff_name):
             shift = make_shift(d, times[:2])
             if not shift:
                 continue
-            item = (shift[0], shift[1], "店舗勤務", None)
+            item = (shift[0], shift[1], "店舗勤務", None, False)
 
         key = (item[0], item[1], item[2], item[3])
         if key not in seen:
             seen.add(key)
             shifts.append(item)
 
-    def sort_key(item):
-        value = item[0]
-        return value.date() if isinstance(value, datetime) else value
+    return sorted(shifts, key=lambda item: item[0])
 
-    return sorted(shifts, key=sort_key)
+
+def geocode(query):
+    response = requests.get(
+        "https://nominatim.openstreetmap.org/search",
+        params={"q": query, "format": "json", "limit": 1, "countrycodes": "jp"},
+        headers={"User-Agent": "r-shift-sync/1.0"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    results = response.json()
+    if not results:
+        return None
+    return float(results[0]["lon"]), float(results[0]["lat"])
+
+
+def get_shop_coordinates(shop):
+    queries = [
+        f"スギ薬局 {shop} 愛知県",
+        f"スギ薬局 {shop} 愛知県春日井市",
+        f"{shop} 愛知県",
+    ]
+    for query in queries:
+        coords = geocode(query)
+        if coords:
+            return coords
+    return None
+
+
+def route_minutes(origin, destination):
+    response = requests.get(
+        f"https://router.project-osrm.org/route/v1/driving/{origin[0]},{origin[1]};{destination[0]},{destination[1]}",
+        params={"overview": "false"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    routes = response.json().get("routes", [])
+    if not routes:
+        return None
+    return max(1, round(routes[0]["duration"] / 60))
+
+
+def add_travel_events(cal, shifts):
+    if not HOME_ADDRESS:
+        raise RuntimeError("RSHIFT_HOME_ADDRESS が未設定です。自宅住所をGitHub Secretsに登録してください")
+    origin = geocode(HOME_ADDRESS)
+    if not origin:
+        raise RuntimeError("自宅住所を地図上の地点に変換できませんでした")
+
+    for start, end, summary, location, is_help in shifts:
+        if not is_help or not location:
+            continue
+        destination = get_shop_coordinates(location)
+        if not destination:
+            raise RuntimeError(f"応援先店舗の位置情報を取得できませんでした: {location}")
+        minutes = route_minutes(origin, destination)
+        if minutes is None:
+            raise RuntimeError(f"応援先店舗までの移動時間を取得できませんでした: {location}")
+        departure = start - timedelta(minutes=minutes)
+
+        event = Event()
+        uid_source = f"travel|{departure.isoformat()}|{start.isoformat()}|{location}|{minutes}"
+        event.add("uid", hashlib.sha256(uid_source.encode()).hexdigest() + "@r-shift-sync")
+        event.add("summary", f"移動：自宅→{location}")
+        event.add("dtstart", departure)
+        event.add("dtend", start)
+        event.add("location", location)
+        event.add("X-RSHIFT-ORIGIN", "自宅")
+        event.add("X-RSHIFT-DESTINATION", location)
+        event.add("X-RSHIFT-TRAVEL-MINUTES", str(minutes))
+        event.add("X-APPLE-TRAVEL-ADVISORY-BEHAVIOR", "AUTOMATIC")
+        event.add("dtstamp", datetime.now(timezone.utc))
+        cal.add_component(event)
 
 
 def build_calendar(shifts):
@@ -256,20 +325,20 @@ def build_calendar(shifts):
     cal.add("calscale", "GREGORIAN")
     cal.add("X-WR-CALNAME", "R-Shift シフト")
     cal.add("X-WR-TIMEZONE", "Asia/Tokyo")
-    for start, end, summary, location in shifts:
+
+    for start, end, summary, location, is_help in shifts:
         event = Event()
-        uid_source = f"{start.isoformat()}|{end.isoformat()}|{summary}|{location or ''}|{HOME_LOCATION}"
+        uid_source = f"{start.isoformat()}|{end.isoformat()}|{summary}|{location or ''}"
         event.add("uid", hashlib.sha256(uid_source.encode()).hexdigest() + "@r-shift-sync")
         event.add("summary", summary)
         event.add("dtstart", start)
         event.add("dtend", end)
         if location:
             event.add("location", location)
-            event.add("X-RSHIFT-ORIGIN", HOME_LOCATION)
-            event.add("X-RSHIFT-DESTINATION", location)
-            event.add("X-APPLE-TRAVEL-ADVISORY-BEHAVIOR", "AUTOMATIC")
         event.add("dtstamp", datetime.now(timezone.utc))
         cal.add_component(event)
+
+    add_travel_events(cal, shifts)
     return cal
 
 
@@ -280,7 +349,7 @@ def main():
         raise RuntimeError("対象月の確定勤務シフトを0件取得しました")
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_bytes(build_calendar(shifts).to_ical())
-    help_count = sum(1 for _, _, summary, _ in shifts if summary.endswith("応援"))
+    help_count = sum(1 for _, _, summary, _, is_help in shifts if is_help)
     print(f"{len(shifts)}件のシフト（うち応援{help_count}件）を {OUTPUT} に出力しました。")
 
 
