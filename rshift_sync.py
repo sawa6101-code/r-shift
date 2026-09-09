@@ -163,7 +163,6 @@ def fetch_staff_page():
 
 def extract_help_shop(node):
     """R-Shiftの応援セルから応援先店舗名を取得する。"""
-    # R-Shiftでは応援先が help_shop 要素として表示されるため、まずそこを優先する。
     for shop_node in node.select(".help_shop"):
         text = shop_node.get_text(" ", strip=True)
         if text:
@@ -173,16 +172,14 @@ def extract_help_shop(node):
             if value:
                 return value
 
-    # HTMLの属性として店舗名を持つ実装差にも対応する。
     for attr in ("data-shop-name", "data-store-name", "data-help-shop", "title", "aria-label"):
         value = node.get(attr, "").strip()
         if value:
             return value
 
-    # 最終フォールバック。時刻文字列と「応援」表記を除いて店舗名らしい文字列を抽出する。
     text = node.get_text(" ", strip=True)
     text = TIME_RE.sub(" ", text)
-    text = re.sub(r"\b応援\b", " ", text)
+    text = text.replace("応援", " ")
     text = re.sub(r"\s+", " ", text).strip()
     return text or None
 
@@ -255,9 +252,7 @@ def build_calendar(shifts):
         event.add("dtend", end)
         event.add("dtstamp", datetime.now(timezone.utc))
         if location:
-            # カレンダー上の目的地は応援先店舗。iOS等で場所として扱えるようLOCATIONに設定。
             event.add("location", location)
-            # iCalendar標準では出発地点をイベントごとに保持する項目がないため、固定出発地点を拡張属性として保存。
             event.add("X-RSHIFT-ORIGIN", HOME_LOCATION)
             event.add("X-RSHIFT-DESTINATION", location)
             event.add("X-APPLE-TRAVEL-ADVISORY-BEHAVIOR", "AUTOMATIC")
