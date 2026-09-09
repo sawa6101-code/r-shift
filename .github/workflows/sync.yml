@@ -26,7 +26,7 @@ jobs:
         run: |
           test -n "$RSHIFT_USER_ID"
           test -n "$RSHIFT_PASSWORD"
-      - name: Inspect day-cell structure
+      - name: Inspect shift-cell ancestors
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
           RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
@@ -36,30 +36,21 @@ jobs:
         run: |
           python - <<'PY'
           from bs4 import BeautifulSoup
-          import re
           import rshift_sync
-          html, year, month = rshift_sync.fetch_staff_page()
+          html, _, _ = rshift_sync.fetch_staff_page()
           soup = BeautifulSoup(html, 'html.parser')
-          table = soup.select_one('table.staffpage-monthly-table')
-          rows = table.find_all('tr') if table else []
-          row = rows[4]
+          row = soup.select_one('table.staffpage-monthly-table').find_all('tr')[4]
           cell = row.find_all(['td','th'])[1]
-          print('[cell] top classes=', cell.get('class', []), 'children=', len(cell.find_all(True)))
-          seen = set()
-          for node in cell.find_all(True):
-              classes = tuple(node.get('class', []))
-              text = node.get_text(' ', strip=True)
-              times = re.findall(r'(?:[01]?\d|2[0-3])[:：][0-5]\d', text)
-              key = (node.name, classes, len(times), text[:20])
-              if times and key not in seen:
-                  seen.add(key)
-                  print('[time-node]', key)
-          print('[header date nodes]')
-          for i, row in enumerate(rows[:3]):
-              for node in row.find_all(['td','th']):
-                  text = node.get_text(' ', strip=True)
-                  if re.search(r'\d{1,2}[/-]\d{1,2}|\d{1,2}月\d{1,2}日', text):
-                      print('[date]', node.name, node.get('class', []), text[:60], 'colspan=', node.get('colspan'))
+          nodes = cell.select('.staff_row.shift_col.working_shift')
+          print('[count] working_shift=', len(nodes))
+          for i, node in enumerate(nodes):
+              chain=[]
+              cur=node
+              for _ in range(6):
+                  if cur is None: break
+                  chain.append((cur.name, cur.get('class', []), {k:v for k,v in cur.attrs.items() if k.startswith('data-') or k in ('id','title')}))
+                  cur=cur.parent
+              print('[node]', i, 'text=', node.get_text(' ',strip=True)[:50], 'chain=', chain)
           PY
       - name: Fetch shifts and generate ICS
         env:
