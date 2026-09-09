@@ -1,0 +1,39 @@
+name: R-Shift sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */2 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Fetch shifts and generate ICS
+        env:
+          RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
+          RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
+          RSHIFT_BASE_URL: ${{ vars.RSHIFT_BASE_URL }}
+          RSHIFT_LOGIN_URL: ${{ vars.RSHIFT_LOGIN_URL }}
+          RSHIFT_STAFF_PAGE_URL: ${{ vars.RSHIFT_STAFF_PAGE_URL }}
+          RSHIFT_ID_FIELD: ${{ vars.RSHIFT_ID_FIELD }}
+          RSHIFT_PASSWORD_FIELD: ${{ vars.RSHIFT_PASSWORD_FIELD }}
+        run: python rshift_sync.py
+      - name: Commit updated calendar
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/shift_calendar.ics
+          git diff --cached --quiet || git commit -m 'Update shift calendar'
+          git push
