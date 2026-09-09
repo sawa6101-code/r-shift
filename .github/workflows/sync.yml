@@ -34,6 +34,51 @@ jobs:
           test -n "$RSHIFT_PASSWORD" || { echo 'RSHIFT_PASSWORD が未設定です'; exit 1; }
           echo 'R-Shift認証情報: 設定済み'
 
+      - name: Inspect R-Shift DOM structure
+        env:
+          RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
+          RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
+          RSHIFT_BASE_URL: https://sgy5zm.rshift.jp
+          RSHIFT_ID_FIELD: login_id
+          RSHIFT_PASSWORD_FIELD: password
+        run: |
+          python - <<'PY'
+          import re
+          from bs4 import BeautifulSoup
+          import rshift_sync
+
+          html = rshift_sync.login_and_fetch()
+          soup = BeautifulSoup(html, 'html.parser')
+          selectors = ['.staffpage-plan-list-shift', '.plan_list_shift', '.popup_working_time', '.shift_non_confirm']
+          for selector in selectors:
+              nodes = soup.select(selector)
+              print(f'[dom] {selector}: {len(nodes)}')
+              for i, node in enumerate(nodes[:12]):
+                  parent = node.parent
+                  chain = []
+                  cur = node
+                  for _ in range(5):
+                      if cur is None: break
+                      chain.append(f'{cur.name}.{".".join(cur.get("class", []))}')
+                      cur = cur.parent
+                  sibling_classes = []
+                  if parent:
+                      for sib in parent.find_all(recursive=False):
+                          if sib is node: continue
+                          sibling_classes.append(f'{sib.name}.{".".join(sib.get("class", []))}')
+                  times = re.findall(r'(?:[01]?\d|2[0-3])[:：][0-5]\d', node.get_text(' ', strip=True))
+                  print(f'[dom]   {i}: chain={chain} siblings={sibling_classes[:12]} time_count={len(times)}')
+          date_like = []
+          for tag in soup.find_all(True):
+              if tag.find(True): continue
+              text = tag.get_text(' ', strip=True)
+              if re.search(r'\d{1,2}[/-]\d{1,2}|\d{1,2}月\d{1,2}日', text):
+                  date_like.append((tag.name, tag.get('class', []), text[:40]))
+          print(f'[dom] leaf date-like count: {len(date_like)}')
+          for item in date_like[:30]:
+              print('[dom] date-like:', item[0], item[1], item[2])
+          PY
+
       - name: Fetch shifts and generate ICS
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
