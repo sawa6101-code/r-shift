@@ -280,14 +280,25 @@ def geocode(query):
 
 
 def get_shop_coordinates(shop):
-    """店舗名から位置を取得する。店舗名だけで失敗するケースに住所検索を追加。"""
+    """店舗名から位置を取得する。既知店舗は住所を優先し、未知店舗は住所検索に失敗した時点で明示的に相談対象とする。"""
+    known_addresses = {
+        "岩成台店": "愛知県春日井市岩成台5丁目2番7",
+        "ことぶき店": "愛知県春日井市ことぶき町8番地3",
+        "大手店": "愛知県春日井市大手町3丁目21番地6",
+        "篠木店": "愛知県春日井市篠木町七丁目45番地23",
+        "高蔵寺店": "愛知県春日井市高蔵寺町1丁目46番地",
+    }
     aliases = {
         "ことぶき店": [
             "スギ薬局 ことぶき店 愛知県春日井市ことぶき町8-3",
             "愛知県春日井市ことぶき町8-3",
         ],
     }
-    queries = aliases.get(shop, []) + [
+    queries = []
+    if shop in known_addresses:
+        queries.append(f"スギ薬局 {shop} {known_addresses[shop]}")
+    queries += aliases.get(shop, [])
+    queries += [
         f"スギ薬局 {shop} 愛知県春日井市",
         f"スギ薬局 {shop} 愛知県",
         f"{shop} 愛知県春日井市",
@@ -331,7 +342,6 @@ def home_coordinates():
             raise RuntimeError("RSHIFT_HOME_LAT / RSHIFT_HOME_LON は数値で指定してください") from exc
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
             raise RuntimeError("RSHIFT_HOME_LAT / RSHIFT_HOME_LON の範囲が不正です")
-        # OSRM/Nominatimでは (longitude, latitude) の順に扱う。
         return lon, lat
 
     if HOME_ADDRESS:
@@ -344,21 +354,20 @@ def home_coordinates():
 
 def add_travel_events(cal, shifts):
     origin = home_coordinates()
+    unknown_shops = []
 
     for start, end, summary, location, is_help in shifts:
         destination_name = location if is_help and location else NORMAL_WORKPLACE
         destination = get_shop_coordinates(destination_name)
         if not destination:
-            print(f"店舗位置を取得できないため、移動イベントを省略: {destination_name}")
+            unknown_shops.append(destination_name)
             continue
         try:
             minutes = route_minutes(origin, destination)
         except requests.RequestException as exc:
-            print(f"移動時間取得に失敗したため移動イベントを省略: {destination_name} ({exc})")
-            continue
+            raise RuntimeError(f"{destination_name}までの移動時間を取得できませんでした: {exc}") from exc
         if minutes is None:
-            print(f"店舗までのルートが見つからないため、移動イベントを省略: {destination_name}")
-            continue
+            raise RuntimeError(f"{destination_name}までのルートが見つからないため、移動時間を算出できませんでした")
 
         total_minutes = minutes + TRAVEL_BUFFER_MINUTES
         departure = start - timedelta(minutes=total_minutes)
@@ -376,6 +385,13 @@ def add_travel_events(cal, shifts):
         event.add("X-APPLE-TRAVEL-ADVISORY-BEHAVIOR", "AUTOMATIC")
         event.add("dtstamp", datetime.now(timezone.utc))
         cal.add_component(event)
+
+    if unknown_shops:
+        shops = "、".join(dict.fromkeys(unknown_shops))
+        raise RuntimeError(
+            f"応援先店舗の住所を特定できないため、移動時間を算出できませんでした: {shops}。"
+            "店舗住所を教えていただければ登録します。"
+        )
 
 
 def build_calendar(shifts):
