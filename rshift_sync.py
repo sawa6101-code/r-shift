@@ -204,11 +204,13 @@ def parse_staff_month(html, year, month, staff_name):
 
     debug_path = os.getenv("RSHIFT_DEBUG_HELP_PATH", "").strip()
     if debug_path:
-        popups = soup.select(".popup_working_time")
-        lines = [f"POPUP_COUNT={len(popups)}"]
-        for i, popup in enumerate(popups, start=1):
-            lines.append(f"POPUP {i} TEXT={popup.get_text(' ', strip=True)}")
-            lines.append(f"POPUP {i} HTML={popup}")
+        plans = soup.select(".plan_list_shift")
+        lines = [f"PLAN_COUNT={len(plans)}"]
+        for i, plan in enumerate(plans, start=1):
+            text = plan.get_text(" ", strip=True)
+            if text:
+                lines.append(f"PLAN {i} TEXT={text}")
+                lines.append(f"PLAN {i} HTML={plan}")
         Path(debug_path).write_text("\n".join(lines), encoding="utf-8")
 
     shifts = []
