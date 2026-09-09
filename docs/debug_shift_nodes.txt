@@ -1,264 +1,235 @@
-DAY 1
-CLASS=staff_row shift_col holiday_shift text_time_center text_pattern_center
-TEXT=休 休
-HTML=<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
+HELP_DAYS=[3, 9, 10, 13, 20, 21]
+TARGET_ROW_HTML=
+<tr>
+<th>
+<div class="staff_row staff_col fixed_staff">
+<span>澤井　郁弥</span>
+<span style="display: none;">澤井　郁弥</span>
+<span class="ui-btn-icon-notext ui-icon-forward text-exchange"></span>
+<span class="confirm＿status yet_status">未申請</span>
+<span class="confirm＿status confirm_status">申請</span>
+<span class="confirm＿status fixed_status">確定</span>
+<span class="confirm＿status help_status">応援</span>
+</div>
+</th>
+<td>
+<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
 <span class="text_time">休</span>
 <span class="text_pattern" style="display: none;">休</span>
 </div>
----
-DAY 2
-CLASS=staff_row shift_col holiday_shift text_time_center text_pattern_center
-TEXT=休 休
-HTML=<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
 <span class="text_time">休</span>
 <span class="text_pattern" style="display: none;">休</span>
 </div>
----
-DAY 3
-CLASS=staff_row shift_col working_shift help_shift text_time_center text_pattern_center
-TEXT=篠木店 篠木店
-HTML=<div class="staff_row shift_col working_shift help_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col working_shift help_shift text_time_center text_pattern_center" style="">
 <span class="text_time">篠木店</span>
 <span class="text_pattern" style="display: none;">篠木店</span>
 </div>
----
-DAY 4
-CLASS=staff_row shift_col working_shift
-TEXT=10:00 20:00 10:00 20:00
-HTML=<div class="staff_row shift_col working_shift" style="">
+<div class="staff_row shift_col working_shift" style="">
 <span class="text_time">10:00<br/>
 20:00</span>
 <span class="text_pattern" style="display: none;">10:00<br/>
 20:00</span>
 </div>
----
-DAY 5
-CLASS=staff_row shift_col working_shift
-TEXT=10:00 18:00 10:00 18:00
-HTML=<div class="staff_row shift_col working_shift" style="">
+<div class="staff_row shift_col working_shift" style="">
 <span class="text_time">10:00<br/>
 18:00</span>
 <span class="text_pattern" style="display: none;">10:00<br/>
 18:00</span>
 </div>
----
-DAY 6
-CLASS=staff_row shift_col holiday_shift text_time_center text_pattern_center
-TEXT=休 休
-HTML=<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
 <span class="text_time">休</span>
 <span class="text_pattern" style="display: none;">休</span>
 </div>
----
-DAY 7
-CLASS=staff_row shift_col working_shift
-TEXT=10:00 20:00 10:00 20:00
-HTML=<div class="staff_row shift_col working_shift" style="">
+<div class="staff_row shift_col working_shift" style="">
 <span class="text_time">10:00<br/>
 20:00</span>
 <span class="text_pattern" style="display: none;">10:00<br/>
 20:00</span>
 </div>
----
-DAY 8
-CLASS=staff_row shift_col holiday_shift text_time_center text_pattern_center
-TEXT=休 休
-HTML=<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
 <span class="text_time">休</span>
 <span class="text_pattern" style="display: none;">休</span>
 </div>
----
-DAY 9
-CLASS=staff_row shift_col working_shift help_shift text_time_center text_pattern_center
-TEXT=ことぶき店 ことぶき店
-HTML=<div class="staff_row shift_col working_shift help_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col working_shift help_shift text_time_center text_pattern_center" style="">
 <span class="text_time">ことぶき店</span>
 <span class="text_pattern" style="display: none;">ことぶき店</span>
 </div>
----
-DAY 10
-CLASS=staff_row shift_col working_shift help_shift text_time_center text_pattern_center
-TEXT=大手店 大手店
-HTML=<div class="staff_row shift_col working_shift help_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col working_shift help_shift text_time_center text_pattern_center" style="">
 <span class="text_time">大手店</span>
 <span class="text_pattern" style="display: none;">大手店</span>
 </div>
----
-DAY 11
-CLASS=staff_row shift_col working_shift
-TEXT=10:00 20:00 10:00 20:00
-HTML=<div class="staff_row shift_col working_shift" style="">
+<div class="staff_row shift_col working_shift" style="">
 <span class="text_time">10:00<br/>
 20:00</span>
 <span class="text_pattern" style="display: none;">10:00<br/>
 20:00</span>
 </div>
----
-DAY 12
-CLASS=staff_row shift_col holiday_shift text_time_center text_pattern_center
-TEXT=休 休
-HTML=<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
 <span class="text_time">休</span>
 <span class="text_pattern" style="display: none;">休</span>
 </div>
----
-DAY 13
-CLASS=staff_row shift_col working_shift help_shift text_time_center text_pattern_center
-TEXT=ことぶき店 ことぶき店
-HTML=<div class="staff_row shift_col working_shift help_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col working_shift help_shift text_time_center text_pattern_center" style="">
 <span class="text_time">ことぶき店</span>
 <span class="text_pattern" style="display: none;">ことぶき店</span>
 </div>
----
-DAY 14
-CLASS=staff_row shift_col working_shift
-TEXT=10:00 20:00 10:00 20:00
-HTML=<div class="staff_row shift_col working_shift" style="">
+<div class="staff_row shift_col working_shift" style="">
 <span class="text_time">10:00<br/>
 20:00</span>
 <span class="text_pattern" style="display: none;">10:00<br/>
 20:00</span>
 </div>
----
-DAY 15
-CLASS=staff_row shift_col working_shift
-TEXT=10:00 20:00 10:00 20:00
-HTML=<div class="staff_row shift_col working_shift" style="">
+<div class="staff_row shift_col working_shift" style="">
 <span class="text_time">10:00<br/>
 20:00</span>
 <span class="text_pattern" style="display: none;">10:00<br/>
 20:00</span>
 </div>
----
-DAY 16
-CLASS=staff_row shift_col holiday_shift text_time_center text_pattern_center
-TEXT=休 休
-HTML=<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
 <span class="text_time">休</span>
 <span class="text_pattern" style="display: none;">休</span>
 </div>
----
-DAY 17
-CLASS=staff_row shift_col working_shift
-TEXT=10:00 20:00 10:00 20:00
-HTML=<div class="staff_row shift_col working_shift" style="">
+<div class="staff_row shift_col working_shift" style="">
 <span class="text_time">10:00<br/>
 20:00</span>
 <span class="text_pattern" style="display: none;">10:00<br/>
 20:00</span>
 </div>
----
-DAY 18
-CLASS=staff_row shift_col holiday_shift text_time_center text_pattern_center
-TEXT=休 休
-HTML=<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
 <span class="text_time">休</span>
 <span class="text_pattern" style="display: none;">休</span>
 </div>
----
-DAY 19
-CLASS=staff_row shift_col working_shift
-TEXT=10:00 18:00 10:00 18:00
-HTML=<div class="staff_row shift_col working_shift" style="">
+<div class="staff_row shift_col working_shift" style="">
 <span class="text_time">10:00<br/>
 18:00</span>
 <span class="text_pattern" style="display: none;">10:00<br/>
 18:00</span>
 </div>
----
-DAY 20
-CLASS=staff_row shift_col working_shift help_shift text_time_center text_pattern_center
-TEXT=ことぶき店 ことぶき店
-HTML=<div class="staff_row shift_col working_shift help_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col working_shift help_shift text_time_center text_pattern_center" style="">
 <span class="text_time">ことぶき店</span>
 <span class="text_pattern" style="display: none;">ことぶき店</span>
 </div>
----
-DAY 21
-CLASS=staff_row shift_col working_shift help_shift text_time_center text_pattern_center
-TEXT=高蔵寺店 高蔵寺店
-HTML=<div class="staff_row shift_col working_shift help_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col working_shift help_shift text_time_center text_pattern_center" style="">
 <span class="text_time">高蔵寺店</span>
 <span class="text_pattern" style="display: none;">高蔵寺店</span>
 </div>
----
-DAY 22
-CLASS=staff_row shift_col holiday_shift text_time_center text_pattern_center
-TEXT=休 休
-HTML=<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
 <span class="text_time">休</span>
 <span class="text_pattern" style="display: none;">休</span>
 </div>
----
-DAY 23
-CLASS=staff_row shift_col working_shift
-TEXT=9:45 18:00 9:45 18:00
-HTML=<div class="staff_row shift_col working_shift" style="">
+<div class="staff_row shift_col working_shift" style="">
 <span class="text_time">9:45<br/>
 18:00</span>
 <span class="text_pattern" style="display: none;">9:45<br/>
 18:00</span>
 </div>
----
-DAY 24
-CLASS=staff_row shift_col holiday_shift text_time_center text_pattern_center
-TEXT=休 休
-HTML=<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
 <span class="text_time">休</span>
 <span class="text_pattern" style="display: none;">休</span>
 </div>
----
-DAY 25
-CLASS=staff_row shift_col working_shift
-TEXT=10:00 20:00 10:00 20:00
-HTML=<div class="staff_row shift_col working_shift" style="">
+<div class="staff_row shift_col working_shift" style="">
 <span class="text_time">10:00<br/>
 20:00</span>
 <span class="text_pattern" style="display: none;">10:00<br/>
 20:00</span>
 </div>
----
-DAY 26
-CLASS=staff_row shift_col holiday_shift text_time_center text_pattern_center
-TEXT=休 休
-HTML=<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
 <span class="text_time">休</span>
 <span class="text_pattern" style="display: none;">休</span>
 </div>
----
-DAY 27
-CLASS=staff_row shift_col holiday_shift text_time_center text_pattern_center
-TEXT=休 休
-HTML=<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
 <span class="text_time">休</span>
 <span class="text_pattern" style="display: none;">休</span>
 </div>
----
-DAY 28
-CLASS=staff_row shift_col working_shift
-TEXT=10:00 20:00 10:00 20:00
-HTML=<div class="staff_row shift_col working_shift" style="">
+<div class="staff_row shift_col working_shift" style="">
 <span class="text_time">10:00<br/>
 20:00</span>
 <span class="text_pattern" style="display: none;">10:00<br/>
 20:00</span>
 </div>
----
-DAY 29
-CLASS=staff_row shift_col holiday_shift text_time_center text_pattern_center
-TEXT=休 休
-HTML=<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
+<div class="staff_row shift_col holiday_shift text_time_center text_pattern_center" style="">
 <span class="text_time">休</span>
 <span class="text_pattern" style="display: none;">休</span>
 </div>
----
-DAY 30
-CLASS=staff_row shift_col working_shift
-TEXT=10:00 20:00 10:00 20:00
-HTML=<div class="staff_row shift_col working_shift" style="">
+<div class="staff_row shift_col working_shift" style="">
 <span class="text_time">10:00<br/>
 20:00</span>
 <span class="text_pattern" style="display: none;">10:00<br/>
 20:00</span>
 </div>
+</td>
+</tr>
+POPUP_WORKING_TIME=
+
+ALL_WORKING_TIME=
+<span class="text_time">休</span>
 ---
+<span class="text_time">休</span>
+---
+<span class="text_time">篠木店</span>
+---
+<span class="text_time">10:00<br/>
+20:00</span>
+---
+<span class="text_time">10:00<br/>
+18:00</span>
+---
+<span class="text_time">休</span>
+---
+<span class="text_time">10:00<br/>
+20:00</span>
+---
+<span class="text_time">休</span>
+---
+<span class="text_time">ことぶき店</span>
+---
+<span class="text_time">大手店</span>
+---
+<span class="text_time">10:00<br/>
+20:00</span>
+---
+<span class="text_time">休</span>
+---
+<span class="text_time">ことぶき店</span>
+---
+<span class="text_time">10:00<br/>
+20:00</span>
+---
+<span class="text_time">10:00<br/>
+20:00</span>
+---
+<span class="text_time">休</span>
+---
+<span class="text_time">10:00<br/>
+20:00</span>
+---
+<span class="text_time">休</span>
+---
+<span class="text_time">10:00<br/>
+18:00</span>
+---
+<span class="text_time">ことぶき店</span>
+---
+<span class="text_time">高蔵寺店</span>
+---
+<span class="text_time">休</span>
+---
+<span class="text_time">9:45<br/>
+18:00</span>
+---
+<span class="text_time">休</span>
+---
+<span class="text_time">10:00<br/>
+20:00</span>
+---
+<span class="text_time">休</span>
+---
+<span class="text_time">休</span>
+---
+<span class="text_time">10:00<br/>
+20:00</span>
+---
+<span class="text_time">休</span>
+---
+<span class="text_time">10:00<br/>
+20:00</span>
