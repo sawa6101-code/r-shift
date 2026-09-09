@@ -162,6 +162,7 @@ def fetch_staff_page():
 
 
 def extract_help_shop(node):
+    """R-Shiftの応援セルから応援先店舗名を取得する。"""
     for shop_node in node.select(".help_shop"):
         text = shop_node.get_text(" ", strip=True)
         if text:
@@ -202,41 +203,32 @@ def parse_staff_month(html, year, month, staff_name):
     if len(shift_cols) < days:
         raise RuntimeError(f"月間シフト列数が不足しています: {len(shift_cols)} / {days}")
 
-    debug_path = os.getenv("RSHIFT_DEBUG_HELP_PATH", "").strip()
-    if debug_path:
-        plans = soup.select(".plan_list_shift")
-        lines = [f"PLAN_COUNT={len(plans)}"]
-        for i, plan in enumerate(plans, start=1):
-            text = plan.get_text(" ", strip=True)
-            if text:
-                lines.append(f"PLAN {i} TEXT={text}")
-                lines.append(f"PLAN {i} HTML={plan}")
-        Path(debug_path).write_text("\n".join(lines), encoding="utf-8")
-
     shifts = []
     seen = set()
     for idx, node in enumerate(shift_cols[:days]):
         classes = set(node.get("class", []))
-        if "holiday_shift" in classes:
+        if "holiday_shift" in classes or "working_shift" not in classes:
             continue
-        if "working_shift" not in classes:
-            continue
-        times = TIME_RE.findall(node.get_text(" ", strip=True))
-        if len(times) < 2:
-            continue
+
         d = date(year, month, idx + 1)
-        shift = make_shift(d, times[:2])
-        if not shift:
-            continue
+
         if "help_shift" in classes:
+            # 応援セルには店舗名だけが表示され、勤務時刻は月間スタッフ行には存在しない。
+            # 時刻を推測せず、当日の終日イベントとして出力する。
             shop = extract_help_shop(node)
             summary = f"応援：{shop}" if shop else "応援"
             location = shop or "応援先"
+            item = (d, d + timedelta(days=1), summary, location, True)
         else:
-            summary = "アールシフト（出勤）"
-            location = None
-        item = (shift[0], shift[1], summary, location)
-        key = (shift[0], shift[1], summary, location)
+            times = TIME_RE.findall(node.get_text(" ", strip=True))
+            if len(times) < 2:
+                continue
+            shift = make_shift(d, times[:2])
+            if not shift:
+                continue
+            item = (shift[0], shift[1], "アールシフト（出勤）", None, False)
+
+        key = (item[0], item[1], item[2], item[3], item[4])
         if key not in seen:
             seen.add(key)
             shifts.append(item)
@@ -250,19 +242,25 @@ def build_calendar(shifts):
     cal.add("calscale", "GREGORIAN")
     cal.add("X-WR-CALNAME", "R-Shift シフト")
     cal.add("X-WR-TIMEZONE", "Asia/Tokyo")
-    for start, end, summary, location in shifts:
+    for start, end, summary, location, all_day in shifts:
         event = Event()
-        uid_source = f"{start.isoformat()}|{end.isoformat()}|{summary}|{location or ''}"
+        uid_source = f"{start.isoformat()}|{end.isoformat()}|{summary}|{location or ''}|{all_day}"
         event.add("uid", hashlib.sha256(uid_source.encode()).hexdigest() + "@r-shift-sync")
         event.add("summary", summary)
-        event.add("dtstart", start)
-        event.add("dtend", end)
+        if all_day:
+            event.add("dtstart", start)
+            event.add("dtend", end)
+        else:
+            event.add("dtstart", start)
+            event.add("dtend", end)
         event.add("dtstamp", datetime.now(timezone.utc))
+        event.add("X-RSHIFT-ORIGIN", HOME_LOCATION)
         if location:
+            # iCalendarのLOCATIONはイベントの目的地（応援先店舗）を表す。
             event.add("location", location)
-            event.add("X-RSHIFT-ORIGIN", HOME_LOCATION)
             event.add("X-RSHIFT-DESTINATION", location)
             event.add("X-APPLE-TRAVEL-ADVISORY-BEHAVIOR", "AUTOMATIC")
+            event.add("description", f"出発地点：{HOME_LOCATION}")
         cal.add_component(event)
     return cal
 
@@ -274,7 +272,7 @@ def main():
         raise RuntimeError("対象月の確定勤務シフトを0件取得しました")
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_bytes(build_calendar(shifts).to_ical())
-    help_count = sum(1 for _, _, summary, _ in shifts if summary.startswith("応援"))
+    help_count = sum(1 for _, _, summary, _, _ in shifts if summary.startswith("応援"))
     print(f"{len(shifts)}件のシフト（うち応援{help_count}件）を {OUTPUT} に出力しました。")
 
 
