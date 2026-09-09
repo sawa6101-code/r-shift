@@ -34,28 +34,6 @@ jobs:
           test -n "$RSHIFT_PASSWORD" || { echo 'RSHIFT_PASSWORD が未設定です'; exit 1; }
           echo 'R-Shift認証情報: 設定済み'
 
-      - name: Inspect target-month response
-        env:
-          RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
-          RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
-          RSHIFT_BASE_URL: https://sgy5zm.rshift.jp
-          RSHIFT_ID_FIELD: login_id
-          RSHIFT_PASSWORD_FIELD: password
-        run: |
-          python - <<'PY'
-          from bs4 import BeautifulSoup
-          import re
-          import rshift_sync
-          html = rshift_sync.fetch_staff_page()
-          soup = BeautifulSoup(html, 'html.parser')
-          print('[inspect] title=', soup.title.get_text(' ', strip=True) if soup.title else '')
-          print('[inspect] forms=', len(soup.find_all('form')))
-          for i, form in enumerate(soup.find_all('form')):
-              names = [x.get('name','') for x in form.select('input[name]')]
-              print('[inspect] form', i, 'action=', form.get('action'), 'method=', form.get('method'), 'inputs=', len(names), 'select_date=', sum(n.startswith('select_date') for n in names), 'time_fields=', sum(n.startswith(('from_hour','to_hour','from_minutes','to_minutes')) for n in names))
-          print('[inspect] plan classes=', len(soup.select('[class*="plan_list_shift"]')), 'working-time=', len(soup.select('[class*="working_time"]')))
-          PY
-
       - name: Fetch shifts and generate ICS
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
