@@ -1,6 +1,7 @@
 import os
 import re
 import hashlib
+from calendar import monthrange
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.parse import urljoin
@@ -17,320 +18,73 @@ PASSWORD = os.environ["RSHIFT_PASSWORD"]
 OUTPUT = Path(os.getenv("OUTPUT_ICS_PATH", "docs/shift_calendar.ics"))
 JST = timezone(timedelta(hours=9))
 
-TIME_RE = re.compile(r"(?:[01]?\d|2[0-3])[:：][0-5]\d")
-DATE_PATTERNS = (
-    r"20\d{2}[/-]\d{1,2}[/-]\d{1,2}",
-    r"20\d{2}年\d{1,2}月\d{1,2}日",
-    r"\d{1,2}[/-]\d{1,2}",
-    r"\d{1,2}月\d{1,2}日",
-)
-
 
 def clean(text):
     return re.sub(r"\s+", " ", text or "").strip()
 
 
-def parse_date(value, default_year=None, default_month=None):
+def parse_yyyymmdd(value):
     value = clean(value)
-    year = default_year or datetime.now(JST).year
-
-    m = re.search(r"(20\d{2})[/-](\d{1,2})[/-](\d{1,2})", value)
-    if m:
-        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
-
-    m = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日", value)
-    if m:
-        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
-
-    m = re.search(r"(\d{1,2})[/-](\d{1,2})", value)
-    if m:
-        return datetime(year, int(m.group(1)), int(m.group(2))).date()
-
-    m = re.search(r"(\d{1,2})月(\d{1,2})日", value)
-    if m:
-        return datetime(year, int(m.group(1)), int(m.group(2))).date()
-
-    m = re.search(r"(\d{1,2})日", value)
-    if m and default_month:
-        return datetime(year, default_month, int(m.group(1))).date()
-
-    raise ValueError(f"日付を解析できません: {value}")
-
-
-def extract_date(text, default_year, default_month):
-    text = clean(text)
-    for pattern in DATE_PATTERNS:
-        m = re.search(pattern, text)
-        if m:
-            try:
-                return parse_date(m.group(0), default_year, default_month)
-            except ValueError:
-                pass
+    if re.fullmatch(r"20\d{6}", value):
+        return datetime.strptime(value, "%Y%m%d").date()
     return None
 
 
-def parse_time(value):
-    value = clean(value).replace("時", ":").replace("分", "")
-    m = TIME_RE.search(value)
-    if not m:
-        raise ValueError(f"時刻を解析できません: {value}")
-    hour, minute = map(int, re.split(r"[:：]", m.group(0)))
-    return hour, minute
-
-
-def node_metadata(node):
-    values = [node.get_text(" ", strip=True)]
-    for key, value in node.attrs.items():
-        if key == "class":
-            continue
-        if isinstance(value, dict):
-            values.extend(str(v) for v in value.values())
-        elif isinstance(value, str):
-            values.append(value)
-    return clean(" | ".join(values))
-
-
-def explicit_date_candidates(soup, default_year, default_month):
-    """ページ全体から日付ラベルを収集する。月セレクタ等のページ全体テキストは参照しない。"""
-    tags = soup.find_all(True)
-    index = {id(tag): i for i, tag in enumerate(tags)}
-    candidates = []
-    seen = set()
-    for tag in tags:
-        if tag.find(True):
-            continue
-        d = extract_date(node_metadata(tag), default_year, default_month)
-        if d and d not in seen:
-            seen.add(d)
-            candidates.append((index[id(tag)], tag, d))
-    return candidates, index
-
-
-def date_from_related_structure(node, default_year, default_month):
-    """同じ行・カード・セル群に属する明示的な日付を優先して取得する。"""
-    tr = node.find_parent("tr")
-    if tr:
-        found = []
-        for tag in tr.find_all(True):
-            if tag.find(True):
-                continue
-            d = extract_date(node_metadata(tag), default_year, default_month)
-            if d and d not in found:
-                found.append(d)
-        if len(found) == 1:
-            return found[0]
-
-    current = node
-    for _ in range(8):
-        if current is None:
-            break
-        found = []
-        for tag in current.find_all(True):
-            if tag.find(True):
-                continue
-            d = extract_date(node_metadata(tag), default_year, default_month)
-            if d and d not in found:
-                found.append(d)
-                if len(found) > 1:
-                    break
-        if len(found) == 1:
-            return found[0]
-        current = current.parent
-    return None
-
-
-def nearest_date(node, candidates, index, default_year, default_month):
-    d = date_from_related_structure(node, default_year, default_month)
-    if d:
-        return d
-    pos = index.get(id(node))
-    if pos is None or not candidates:
-        return None
-    return min(candidates, key=lambda item: abs(item[0] - pos))[2]
-
-
-def make_shift(d, times):
-    if d is None or len(times) < 2:
-        return None
+def make_shift(d, fh, fm, th, tm):
     try:
-        sh, sm = parse_time(times[0])
-        eh, em = parse_time(times[1])
-    except ValueError:
+        start = datetime(d.year, d.month, d.day, int(fh), int(fm), tzinfo=JST)
+        end = datetime(d.year, d.month, d.day, int(th), int(tm), tzinfo=JST)
+    except (TypeError, ValueError):
         return None
-    start = datetime(d.year, d.month, d.day, sh, sm, tzinfo=JST)
-    end = datetime(d.year, d.month, d.day, eh, em, tzinfo=JST)
     if end <= start:
         end += timedelta(days=1)
     return start, end
 
 
-def parse_rshift_dom(soup, page_year, page_month):
-    selectors = [
-        ".staffpage-plan-list-shift",
-        ".plan_list_shift",
-        ".popup_working_time",
-        ".shift_non_confirm",
-    ]
-    nodes = []
-    seen_nodes = set()
-    for selector in selectors:
-        for node in soup.select(selector):
-            if id(node) not in seen_nodes:
-                seen_nodes.add(id(node))
-                nodes.append(node)
-
-    date_candidates, index = explicit_date_candidates(soup, page_year, page_month)
-    shifts = []
-    seen_shift = set()
-
-    for node in nodes:
-        time_values = []
-        for tn in node.select(".popup_working_time"):
-            time_values.extend(TIME_RE.findall(node_metadata(tn)))
-        if not time_values:
-            time_values = TIME_RE.findall(node_metadata(node))
-        if len(time_values) < 2:
-            continue
-
-        d = nearest_date(node, date_candidates, index, page_year, page_month)
-        shift = make_shift(d, time_values[:2])
-        if shift and shift not in seen_shift:
-            seen_shift.add(shift)
-            shifts.append(shift)
-
-    return shifts
-
-
-def parse_generic_dom(soup, page_year, page_month):
-    selectors = [
-        "tr.shift-row", "table tr", "li", "div[class*='shift']",
-        "div[class*='schedule']", "div[class*='work']", "td", "th",
-    ]
-    date_candidates, index = explicit_date_candidates(soup, page_year, page_month)
-    shifts = []
-    seen_shift = set()
-    seen_text = set()
-
-    for selector in selectors:
-        for node in soup.select(selector):
-            text = clean(node.get_text(" ", strip=True))
-            if not text or text in seen_text:
-                continue
-            seen_text.add(text)
-            times = TIME_RE.findall(text)
-            if len(times) < 2:
-                continue
-            d = nearest_date(node, date_candidates, index, page_year, page_month) or extract_date(text, page_year, page_month)
-            shift = make_shift(d, times[:2])
-            if shift and shift not in seen_shift:
-                seen_shift.add(shift)
-                shifts.append(shift)
-    return shifts
-
-
-def parse_shift_rows(html):
-    soup = BeautifulSoup(html, "html.parser")
+def target_month():
+    value = os.getenv("RSHIFT_TARGET_MONTH", "").strip()
+    if value:
+        m = re.fullmatch(r"(20\d{2})-(0[1-9]|1[0-2])", value)
+        if not m:
+            raise RuntimeError("RSHIFT_TARGET_MONTH は YYYY-MM 形式で指定してください")
+        return int(m.group(1)), int(m.group(2))
     now = datetime.now(JST)
-
-    full_dates = []
-    for tag in soup.find_all(True):
-        if tag.find(True):
-            continue
-        text = node_metadata(tag)
-        if re.search(r"20\d{2}年|\d{1,2}[/-]\d{1,2}|\d{1,2}月\d{1,2}日", text):
-            full_dates.append(text)
-
-    year_match = re.search(r"(20\d{2})年", " ".join(full_dates))
-    page_year = int(year_match.group(1)) if year_match else now.year
-    md_matches = re.findall(r"(\d{1,2})[/-]\d{1,2}|(\d{1,2})月\d{1,2}日", " ".join(full_dates))
-    page_month = now.month
-    if md_matches:
-        page_month = int(next(a or b for a, b in md_matches))
-
-    shifts = parse_rshift_dom(soup, page_year, page_month)
-    if not shifts:
-        shifts = parse_generic_dom(soup, page_year, page_month)
-
-    date_candidates, _ = explicit_date_candidates(soup, page_year, page_month)
-    unique_days = {start.date() for start, _ in shifts}
-    if len(shifts) >= 2 and len(date_candidates) >= 2 and len(unique_days) == 1:
-        raise RuntimeError("R-Shiftの日付関連付けが不自然です。複数の日付候補があるのに取得シフトが1日に集中したため、誤ったカレンダー生成を停止しました。")
-
-    shifts.sort()
-    return shifts
-
-
-def print_page_diagnostics(html):
-    soup = BeautifulSoup(html, "html.parser")
-    print("[diagnostic] title:", clean(soup.title.get_text()) if soup.title else "(none)")
-    print("[diagnostic] forms:", len(soup.find_all("form")), "tables:", len(soup.find_all("table")))
-    for selector in (".staffpage-plan-list-shift", ".plan_list_shift", ".popup_working_time", ".shift_non_confirm"):
-        matches = soup.select(selector)
-        print(f"[diagnostic] {selector}: {len(matches)}")
-        for node in matches[:8]:
-            times = TIME_RE.findall(node_metadata(node))
-            print(f"[diagnostic]   tag={node.name} children={len(node.find_all(True))} times={len(times)} classes={node.get('class', [])}")
+    return now.year, now.month
 
 
 def find_login_form(response):
     soup = BeautifulSoup(response.text, "html.parser")
-    forms = soup.find_all("form")
-    for form in forms:
-        inputs = form.select("input[name]")
-        if any(i.get("type", "").lower() == "password" for i in inputs):
-            action = form.get("action") or response.url
-            return form, urljoin(response.url, action)
-    if forms:
-        form = forms[0]
-        action = form.get("action") or response.url
-        return form, urljoin(response.url, action)
+    for form in soup.find_all("form"):
+        if any(i.get("type", "").lower() == "password" for i in form.select("input[name]")):
+            return form, urljoin(response.url, form.get("action") or response.url)
     return None, None
 
 
 def detect_login_fields(form):
     inputs = form.select("input[name]")
-    password = next((i["name"] for i in inputs if i.get("type", "").lower() == "password"), None)
-    if not password:
-        password = os.getenv("RSHIFT_PASSWORD_FIELD", "password")
-
-    id_candidates = ("login_id", "userid", "user_id", "username", "login", "staff_id", "id")
-    user = next((name for name in id_candidates if any(i.get("name") == name for i in inputs)), None)
+    password = next((i["name"] for i in inputs if i.get("type", "").lower() == "password"), "password")
+    candidates = ("login_id", "userid", "user_id", "username", "login", "staff_id", "id")
+    user = next((n for n in candidates if any(i.get("name") == n for i in inputs)), None)
     if not user:
         text_inputs = [i for i in inputs if i.get("type", "text").lower() in ("text", "email")]
         user = text_inputs[0].get("name") if text_inputs else os.getenv("RSHIFT_ID_FIELD", "login_id")
     return user, password
 
 
-def login_and_fetch():
+def login_session():
     s = requests.Session()
     s.headers.update({
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/128 Safari/537.36",
         "Accept-Language": "ja,en;q=0.8",
     })
-
-    candidates = []
-    if LOGIN_URL:
-        candidates.append(LOGIN_URL)
-    candidates.extend([
-        BASE_URL + "/",
-        BASE_URL + "/staff/",
-        BASE_URL + "/staffpage/",
-        BASE_URL + "/login/",
-    ])
-
+    candidates = [u for u in (LOGIN_URL, BASE_URL + "/", BASE_URL + "/staff/", BASE_URL + "/staffpage/", BASE_URL + "/login/") if u]
     response = None
     form = None
     post_url = None
-    errors = []
-    seen = set()
-    for url in candidates:
-        if url in seen:
-            continue
-        seen.add(url)
+    for url in dict.fromkeys(candidates):
         try:
             r = s.get(url, timeout=30, allow_redirects=True)
             if r.status_code >= 400:
-                errors.append(f"{url} -> HTTP {r.status_code}")
                 continue
             f, action = find_login_form(r)
             if f is not None:
@@ -339,11 +93,10 @@ def login_and_fetch():
             if "ログアウト" in r.text or "シフト" in r.text:
                 response = r
                 break
-        except requests.RequestException as exc:
-            errors.append(f"{url} -> {exc}")
-
+        except requests.RequestException:
+            continue
     if response is None:
-        raise RuntimeError("R-Shiftのログイン画面を取得できませんでした。試行先: " + "; ".join(errors))
+        raise RuntimeError("R-Shiftのログイン画面を取得できませんでした")
 
     if form is not None:
         data = {}
@@ -351,29 +104,94 @@ def login_and_fetch():
             typ = inp.get("type", "").lower()
             if typ not in {"submit", "button", "image", "password"}:
                 data[inp["name"]] = inp.get("value", "")
-        id_field, password_field = detect_login_fields(form)
-        data[id_field] = USER_ID
+        user_field, password_field = detect_login_fields(form)
+        data[user_field] = USER_ID
         data[password_field] = PASSWORD
         r = s.post(post_url, data=data, timeout=30, allow_redirects=True)
         r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-        still_login = bool(soup.find("input", {"type": "password"}))
-        if still_login and "ログアウト" not in r.text:
-            raise RuntimeError("R-Shiftへのログインに失敗した可能性があります。")
+        if BeautifulSoup(r.text, "html.parser").find("input", {"type": "password"}) and "ログアウト" not in r.text:
+            raise RuntimeError("R-Shiftへのログインに失敗した可能性があります")
         response = r
+    return s, response
 
+
+def fetch_staff_page():
+    s, response = login_session()
     targets = []
     if STAFF_PAGE_URL:
         targets.append(STAFF_PAGE_URL)
     targets.extend([response.url, BASE_URL + "/staffpage/", BASE_URL + "/staff/"])
+    page = None
     for target in dict.fromkeys(targets):
         try:
             r = s.get(target, timeout=30, allow_redirects=True)
             if r.status_code < 400 and ("ログイン" not in r.text or "ログアウト" in r.text):
-                return r.text
+                page = r
+                break
         except requests.RequestException:
             continue
-    raise RuntimeError("ログイン後のスタッフページを取得できませんでした。")
+    if page is None:
+        raise RuntimeError("ログイン後のスタッフページを取得できませんでした")
+
+    year, month = target_month()
+    first = f"{year:04d}{month:02d}01"
+    last = f"{year:04d}{month:02d}{monthrange(year, month)[1]:02d}"
+    soup = BeautifulSoup(page.text, "html.parser")
+    monthly_form = next((f for f in soup.find_all("form") if "/staffpage/monthly.php" in (f.get("action") or "")), None)
+    if monthly_form is None:
+        raise RuntimeError("R-Shift月間シフトフォームを見つけられませんでした")
+
+    data = {}
+    for inp in monthly_form.select("input[name]"):
+        typ = inp.get("type", "").lower()
+        if typ not in {"submit", "button", "image"}:
+            data[inp["name"]] = inp.get("value", "")
+    data["mode"] = data.get("mode") or "monthly"
+    data["target_date_from"] = first
+    data["target_date_to"] = last
+
+    action = urljoin(page.url, monthly_form.get("action") or "/staffpage/monthly.php")
+    r = s.post(action, data=data, timeout=30, allow_redirects=True)
+    r.raise_for_status()
+    if "ログイン" in r.text and "ログアウト" not in r.text:
+        raise RuntimeError("対象月の月間シフトページ取得時にログインへ戻されました")
+    print(f"R-Shift対象月: {year:04d}-{month:02d}")
+    return r.text
+
+
+def parse_rshift_hidden_data(html):
+    soup = BeautifulSoup(html, "html.parser")
+    shifts = []
+    seen = set()
+    for form in soup.find_all("form"):
+        buttons = form.select("button.plan_list_shift")
+        if not buttons:
+            continue
+        for idx, button in enumerate(buttons):
+            classes = set(button.get("class", []))
+            if "plan_update_color" not in classes:
+                continue
+            def val(name):
+                node = form.select_one(f'input[name="{name}{idx}"]')
+                return node.get("value", "") if node else ""
+            d = parse_yyyymmdd(val("select_date"))
+            if not d:
+                continue
+            fh, fm, th, tm = val("from_hour"), val("from_minutes"), val("to_hour"), val("to_minutes")
+            if not all(v != "" for v in (fh, fm, th, tm)):
+                continue
+            shift = make_shift(d, fh, fm, th, tm)
+            if shift and shift not in seen:
+                seen.add(shift)
+                shifts.append(shift)
+    return sorted(shifts)
+
+
+def parse_shift_rows(html):
+    shifts = parse_rshift_hidden_data(html)
+    if not shifts:
+        raise RuntimeError("R-Shift対象月から確定シフトを0件取得しました。ページ構造または対象月を確認してください")
+    return shifts
 
 
 def build_calendar(shifts):
@@ -383,10 +201,10 @@ def build_calendar(shifts):
     cal.add("calscale", "GREGORIAN")
     cal.add("X-WR-CALNAME", "R-Shift シフト")
     cal.add("X-WR-TIMEZONE", "Asia/Tokyo")
-
     for start, end in shifts:
         event = Event()
-        event.add("uid", hashlib.sha256(f"{start.isoformat()}|{end.isoformat()}".encode()).hexdigest() + "@r-shift-sync")
+        uid = hashlib.sha256(f"{start.isoformat()}|{end.isoformat()}".encode()).hexdigest() + "@r-shift-sync"
+        event.add("uid", uid)
         event.add("summary", "アールシフト（出勤）")
         event.add("dtstart", start)
         event.add("dtend", end)
@@ -396,16 +214,8 @@ def build_calendar(shifts):
 
 
 def main():
-    html = login_and_fetch()
-    try:
-        shifts = parse_shift_rows(html)
-    except RuntimeError:
-        print_page_diagnostics(html)
-        raise
-    if not shifts:
-        print_page_diagnostics(html)
-        raise RuntimeError("ログイン後のページからシフトを0件取得しました。")
-
+    html = fetch_staff_page()
+    shifts = parse_shift_rows(html)
     cal = build_calendar(shifts)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_bytes(cal.to_ical())
