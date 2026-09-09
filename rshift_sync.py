@@ -204,12 +204,12 @@ def parse_staff_month(html, year, month, staff_name):
 
     debug_path = os.getenv("RSHIFT_DEBUG_HELP_PATH", "").strip()
     if debug_path:
-        help_days = [i for i, node in enumerate(shift_cols[:days], start=1) if "help_shift" in set(node.get("class", []))]
-        blocks = [f"HELP_DAYS={help_days}"]
-        blocks.append("TARGET_ROW_HTML=\n" + str(target_row))
-        blocks.append("POPUP_WORKING_TIME=\n" + "\n---\n".join(str(x) for x in target_row.select(".popup_working_time")))
-        blocks.append("ALL_WORKING_TIME=\n" + "\n---\n".join(str(x) for x in target_row.select(".text_time")))
-        Path(debug_path).write_text("\n".join(blocks), encoding="utf-8")
+        popups = soup.select(".popup_working_time")
+        lines = [f"POPUP_COUNT={len(popups)}"]
+        for i, popup in enumerate(popups, start=1):
+            lines.append(f"POPUP {i} TEXT={popup.get_text(' ', strip=True)}")
+            lines.append(f"POPUP {i} HTML={popup}")
+        Path(debug_path).write_text("\n".join(lines), encoding="utf-8")
 
     shifts = []
     seen = set()
