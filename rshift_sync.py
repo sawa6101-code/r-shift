@@ -161,13 +161,18 @@ def fetch_staff_page():
 
 def parse_rshift_hidden_data(html):
     soup = BeautifulSoup(html, "html.parser")
+    forms = soup.find_all("form")
+    print(f"[parser] forms={len(forms)} buttons.plan_list_shift={len(soup.select('button.plan_list_shift'))}")
     shifts = []
     seen = set()
-    for form in soup.find_all("form"):
+    button_class_counts = {}
+    for form in forms:
         buttons = form.select("button.plan_list_shift")
         if not buttons:
             continue
         for idx, button in enumerate(buttons):
+            for cls in button.get("class", []):
+                button_class_counts[cls] = button_class_counts.get(cls, 0) + 1
             def val(name):
                 node = form.select_one(f'input[name="{name}{idx}"]')
                 return node.get("value", "") if node else ""
@@ -181,6 +186,7 @@ def parse_rshift_hidden_data(html):
             if shift and shift not in seen:
                 seen.add(shift)
                 shifts.append(shift)
+    print(f"[parser] button_classes={button_class_counts}")
     return sorted(shifts)
 
 
