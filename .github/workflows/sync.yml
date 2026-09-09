@@ -37,8 +37,6 @@ jobs:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
           RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
           RSHIFT_BASE_URL: https://sgy5zm.rshift.jp
-          RSHIFT_LOGIN_URL: https://sgy5zm.rshift.jp/staff/login/
-          RSHIFT_STAFF_PAGE_URL: https://sgy5zm.rshift.jp/staffpage/
           RSHIFT_ID_FIELD: login_id
           RSHIFT_PASSWORD_FIELD: password
         run: python rshift_sync.py
