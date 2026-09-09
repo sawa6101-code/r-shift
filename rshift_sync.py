@@ -234,7 +234,7 @@ def parse_staff_month(html, year, month, staff_name):
             shift = make_shift(d, times[:2])
             if not shift:
                 continue
-            item = (shift[0], shift[1], "アールシフト（出勤）", None, False)
+            item = (shift[0], shift[1], "店舗勤務", None, False)
 
         key = (item[0], item[1], item[2], item[3], item[4])
         if key not in seen:
