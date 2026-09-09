@@ -75,6 +75,127 @@ def extract_date(text, page_year, page_month):
     return None
 
 
+def node_metadata(node):
+    """DOM上の日付候補を、表示テキストとdata/title系属性から抽出する。"""
+    values = [node.get_text(" ", strip=True)]
+    for key, value in node.attrs.items():
+        if key == "class":
+            continue
+        if key == "data" and isinstance(value, dict):
+            values.extend(str(v) for v in value.values())
+        elif isinstance(value, str):
+            values.append(value)
+    return clean(" | ".join(values))
+
+
+def nearest_date(node, page_year, page_month):
+    """シフト要素自身→親→兄弟の順で日付を探索する。"""
+    current = node
+    for _ in range(5):
+        if current is None:
+            break
+        d = extract_date(node_metadata(current), page_year, page_month)
+        if d:
+            return d
+        current = current.parent
+
+    parent = node.parent
+    if parent:
+        siblings = list(parent.children)
+        try:
+            idx = siblings.index(node)
+        except ValueError:
+            idx = -1
+        if idx >= 0:
+            for sibling in reversed(siblings[max(0, idx - 4):idx]):
+                if getattr(sibling, "name", None):
+                    d = extract_date(node_metadata(sibling), page_year, page_month)
+                    if d:
+                        return d
+    return None
+
+
+def make_shift(d, times):
+    if len(times) < 2 or d is None:
+        return None
+    try:
+        sh, sm = parse_time(times[0])
+        eh, em = parse_time(times[1])
+    except ValueError:
+        return None
+    start = datetime(d.year, d.month, d.day, sh, sm, tzinfo=JST)
+    end = datetime(d.year, d.month, d.day, eh, em, tzinfo=JST)
+    if end <= start:
+        end += timedelta(days=1)
+    return start, end
+
+
+def parse_rshift_dom(soup, page_year, page_month):
+    """R-Shift固有の shift/card DOM を優先して解析する。"""
+    selectors = [
+        ".staffpage-plan-list-shift",
+        ".plan_list_shift",
+        ".popup_working_time",
+        ".shift_non_confirm",
+    ]
+    nodes = []
+    seen = set()
+    for selector in selectors:
+        for node in soup.select(selector):
+            ident = id(node)
+            if ident not in seen:
+                seen.add(ident)
+                nodes.append(node)
+
+    shifts = []
+    seen_shift = set()
+    for node in nodes:
+        # 最も信頼できる時刻源は popup_working_time。なければシフト要素全体から抽出。
+        time_nodes = node.select(".popup_working_time")
+        time_values = []
+        for tn in time_nodes:
+            time_values.extend(re.findall(r"(?:[01]?\d|2[0-3])[:：][0-5]\d", node_metadata(tn)))
+        if not time_values:
+            time_values = re.findall(r"(?:[01]?\d|2[0-3])[:：][0-5]\d", node_metadata(node))
+
+        # 同じDOMを親子で二重に拾わないため、先頭2時刻だけを1シフトとして扱う。
+        if len(time_values) < 2:
+            continue
+        d = nearest_date(node, page_year, page_month)
+        shift = make_shift(d, time_values[:2])
+        if shift and shift not in seen_shift:
+            seen_shift.add(shift)
+            shifts.append(shift)
+
+    return shifts
+
+
+def parse_generic_dom(soup, page_year, page_month):
+    """R-ShiftのHTML変更に備えた汎用フォールバック。"""
+    selectors = [
+        "tr.shift-row", "table tr", "li", "div[class*='shift']",
+        "div[class*='schedule']", "div[class*='work']", "td", "th",
+    ]
+    shifts = []
+    seen_shift = set()
+    seen_text = set()
+    for selector in selectors:
+        for node in soup.select(selector):
+            text = clean(node.get_text(" ", strip=True))
+            if not text or text in seen_text:
+                continue
+            seen_text.add(text)
+            times = re.findall(r"(?:[01]?\d|2[0-3])[:：][0-5]\d", text)
+            if len(times) < 2:
+                continue
+            d = nearest_date(node, page_year, page_month) or extract_date(text, page_year, page_month)
+            shift = make_shift(d, times[:2])
+            if shift and shift not in seen_shift:
+                seen_shift.add(shift)
+                shifts.append(shift)
+    return shifts
+
+
 def parse_shift_rows(html):
     soup = BeautifulSoup(html, "html.parser")
     now = datetime.now(JST)
@@ -85,62 +206,29 @@ def parse_shift_rows(html):
     month_match = re.search(r"(\d{1,2})月", page_text)
     page_month = int(month_match.group(1)) if month_match else now.month
 
-    # R-Shiftの表示形式が変更されても拾えるよう、行・カード・セル単位で広く探索する。
-    candidates = []
-    selectors = [
-        "tr.shift-row", "table tr", "li", "div.shift", "div[class*='shift']",
-        "div[class*='schedule']", "div[class*='work']", "td", "th",
-    ]
-    seen = set()
-    for selector in selectors:
-        for node in soup.select(selector):
-            text = clean(node.get_text(" ", strip=True))
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            candidates.append(text)
-
-    shifts = []
-    seen_shift = set()
-    for text in candidates:
-        times = re.findall(r"\d{1,2}[:：]\d{2}", text)
-        if len(times) < 2:
-            continue
-        d = extract_date(text, page_year, page_month)
-        if d is None:
-            continue
-        try:
-            sh, sm = parse_time(times[0])
-            eh, em = parse_time(times[1])
-        except ValueError:
-            continue
-        start = datetime(d.year, d.month, d.day, sh, sm, tzinfo=JST)
-        end = datetime(d.year, d.month, d.day, eh, em, tzinfo=JST)
-        if end <= start:
-            end += timedelta(days=1)
-        key = (start, end)
-        if key not in seen_shift:
-            seen_shift.add(key)
-            shifts.append(key)
-
+    shifts = parse_rshift_dom(soup, page_year, page_month)
+    if not shifts:
+        shifts = parse_generic_dom(soup, page_year, page_month)
     shifts.sort()
     return shifts
 
 
 def print_page_diagnostics(html):
-    """0件時に個人情報を極力出さず、HTML構造だけをActionsログへ出す。"""
+    """0件時に個人情報を出さず、R-Shift DOMの構造情報だけをActionsログへ出す。"""
     soup = BeautifulSoup(html, "html.parser")
     print("[diagnostic] title:", clean(soup.title.get_text()) if soup.title else "(none)")
     print("[diagnostic] forms:", len(soup.find_all("form")), "tables:", len(soup.find_all("table")))
-    for i, table in enumerate(soup.find_all("table")[:10], 1):
-        classes = " ".join(table.get("class", []))
-        tid = table.get("id", "")
-        rows = table.find_all("tr")
-        print(f"[diagnostic] table#{i} id={tid!r} class={classes!r} rows={len(rows)}")
-        for row in rows[:3]:
-            cells = [clean(c.get_text(" ", strip=True)) for c in row.find_all(["th", "td"])]
-            # 値は出さず、セル数と時刻/日付の有無だけ表示する。
-            print(f"[diagnostic]   row cells={len(cells)} has_date={bool(extract_date(' | '.join(cells), datetime.now(JST).year, datetime.now(JST).month))} times={len(re.findall(r'\\d{1,2}[:：]\\d{2}', ' | '.join(cells)))}")
+
+    for selector in (".staffpage-plan-list-shift", ".plan_list_shift", ".popup_working_time", ".shift_non_confirm"):
+        matches = soup.select(selector)
+        print(f"[diagnostic] {selector}: {len(matches)}")
+        for node in matches[:8]:
+            attrs = {k: v for k, v in node.attrs.items() if k != "class" and (k.startswith("data-") or k in {"id", "title", "name"})}
+            times = re.findall(r"(?:[01]?\d|2[0-3])[:：][0-5]\d", node_metadata(node))
+            date_found = extract_date(node_metadata(node), datetime.now(JST).year, datetime.now(JST).month)
+            child_classes = sorted({c for child in node.find_all(True) for c in child.get("class", []) if any(k in c.lower() for k in ("shift", "work", "date", "time"))})[:20]
+            print(f"[diagnostic]   tag={node.name} children={len(node.find_all(True))} attrs={list(attrs.keys())} times={len(times)} date={bool(date_found)} child_classes={child_classes}")
+
     classes = sorted({c for tag in soup.find_all(True) for c in tag.get("class", []) if any(k in c.lower() for k in ("shift", "schedule", "work", "calendar"))})
     print("[diagnostic] relevant classes:", classes[:80])
 
@@ -278,7 +366,7 @@ def main():
     shifts = parse_shift_rows(html)
     if not shifts:
         print_page_diagnostics(html)
-        raise RuntimeError("ログイン後のページからシフトを0件取得しました。Actionsログのdiagnostic情報を基に抽出処理を調整します。")
+        raise RuntimeError("ログイン後のページからシフトを0件取得しました。R-Shift固有DOMの抽出処理を調整してください。")
     cal = build_calendar(shifts)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_bytes(cal.to_ical())
