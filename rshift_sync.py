@@ -17,23 +17,24 @@ USER_ID = os.environ["RSHIFT_USER_ID"]
 PASSWORD = os.environ["RSHIFT_PASSWORD"]
 OUTPUT = Path(os.getenv("OUTPUT_ICS_PATH", "docs/shift_calendar.ics"))
 JST = timezone(timedelta(hours=9))
+TIME_RE = re.compile(r"(?:[01]?\d|2[0-3])[:：][0-5]\d")
 
 
-def parse_yyyymmdd(value):
-    if re.fullmatch(r"20\d{6}", (value or "").strip()):
-        return datetime.strptime(value.strip(), "%Y%m%d").date()
+def parse_date(text, default_year, default_month):
+    text = text or ""
+    m = re.search(r"(20\d{2})[/-](\d{1,2})[/-](\d{1,2})", text)
+    if m:
+        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+    m = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日", text)
+    if m:
+        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+    m = re.search(r"(\d{1,2})[/-](\d{1,2})", text)
+    if m:
+        return datetime(default_year, int(m.group(1)), int(m.group(2))).date()
+    m = re.search(r"(\d{1,2})月(\d{1,2})日", text)
+    if m:
+        return datetime(default_year, int(m.group(1)), int(m.group(2))).date()
     return None
-
-
-def make_shift(d, fh, fm, th, tm):
-    try:
-        start = datetime(d.year, d.month, d.day, int(fh), int(fm), tzinfo=JST)
-        end = datetime(d.year, d.month, d.day, int(th), int(tm), tzinfo=JST)
-    except (TypeError, ValueError):
-        return None
-    if end <= start:
-        end += timedelta(days=1)
-    return start, end
 
 
 def target_month():
@@ -45,6 +46,21 @@ def target_month():
         return int(m.group(1)), int(m.group(2))
     now = datetime.now(JST)
     return now.year, now.month
+
+
+def make_shift(d, times):
+    if d is None or len(times) < 2:
+        return None
+    try:
+        sh, sm = map(int, re.split(r"[:：]", times[0]))
+        eh, em = map(int, re.split(r"[:：]", times[1]))
+        start = datetime(d.year, d.month, d.day, sh, sm, tzinfo=JST)
+        end = datetime(d.year, d.month, d.day, eh, em, tzinfo=JST)
+    except (TypeError, ValueError):
+        return None
+    if end <= start:
+        end += timedelta(days=1)
+    return start, end
 
 
 def find_login_form(response):
@@ -92,7 +108,6 @@ def login_session():
             continue
     if response is None:
         raise RuntimeError("R-Shiftのログイン画面を取得できませんでした")
-
     if form is not None:
         data = {}
         for inp in form.select("input[name]"):
@@ -132,13 +147,11 @@ def fetch_staff_page():
     monthly_form = next((f for f in soup.find_all("form") if "/staffpage/monthly.php" in (f.get("action") or "")), None)
     if monthly_form is None:
         raise RuntimeError("R-Shift月間シフトフォームを見つけられませんでした")
-
     data = {}
     for inp in monthly_form.select("input[name]"):
         typ = inp.get("type", "").lower()
         if typ not in {"submit", "button", "image"}:
             data[inp["name"]] = inp.get("value", "")
-    data["mode"] = data.get("mode") or "monthly"
     data["target_date_from"] = first
     data["target_date_to"] = last
     action = urljoin(page.url, monthly_form.get("action") or "/staffpage/monthly.php")
@@ -147,37 +160,51 @@ def fetch_staff_page():
     if "ログイン" in r.text and "ログアウト" not in r.text:
         raise RuntimeError("対象月の月間シフトページ取得時にログインへ戻されました")
     print(f"R-Shift対象月: {year:04d}-{month:02d}")
-    return r.text
+    return r.text, year, month
 
 
-def parse_rshift_hidden_data(html):
+def parse_monthly_reference(html, year, month):
     soup = BeautifulSoup(html, "html.parser")
-    date_inputs = soup.select('input[name^="select_date"]')
-    print(f"[parser] select_date inputs={len(date_inputs)}")
     shifts = []
     seen = set()
-    for date_input in date_inputs:
-        name = date_input.get("name", "")
-        suffix = name[len("select_date"):]
-        d = parse_yyyymmdd(date_input.get("value", ""))
+    for row in soup.find_all("tr"):
+        text = row.get_text(" ", strip=True)
+        if not text:
+            continue
+        times = TIME_RE.findall(text)
+        if len(times) < 2:
+            continue
+        d = parse_date(text, year, month)
         if not d:
             continue
-        def val(prefix):
-            node = soup.select_one(f'input[name="{prefix}{suffix}"]')
-            return node.get("value", "") if node else ""
-        fh, fm, th, tm = val("from_hour"), val("from_minutes"), val("to_hour"), val("to_minutes")
-        if not all(v != "" for v in (fh, fm, th, tm)):
-            continue
-        shift = make_shift(d, fh, fm, th, tm)
+        shift = make_shift(d, times[:2])
         if shift and shift not in seen:
             seen.add(shift)
             shifts.append(shift)
-    print(f"[parser] parsed shifts={len(shifts)}")
+
+    # 行単位で日付が取れない場合は、日付ラベルを持つ近傍ブロックを探索。
+    if not shifts:
+        for node in soup.find_all(["td", "li", "div"]):
+            text = node.get_text(" ", strip=True)
+            times = TIME_RE.findall(text)
+            if len(times) < 2:
+                continue
+            d = parse_date(text, year, month)
+            if not d:
+                parent = node.parent
+                if parent:
+                    parent_text = parent.get_text(" ", strip=True)
+                    d = parse_date(parent_text, year, month)
+            shift = make_shift(d, times[:2])
+            if shift and shift not in seen:
+                seen.add(shift)
+                shifts.append(shift)
     return sorted(shifts)
 
 
-def parse_shift_rows(html):
-    shifts = parse_rshift_hidden_data(html)
+def parse_shift_rows(html, year, month):
+    shifts = parse_monthly_reference(html, year, month)
+    print(f"[parser] parsed shifts={len(shifts)}")
     if not shifts:
         raise RuntimeError("R-Shift対象月から勤務時間を0件取得しました。対象月またはページ構造を確認してください")
     return shifts
@@ -202,8 +229,8 @@ def build_calendar(shifts):
 
 
 def main():
-    html = fetch_staff_page()
-    shifts = parse_shift_rows(html)
+    html, year, month = fetch_staff_page()
+    shifts = parse_shift_rows(html, year, month)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_bytes(build_calendar(shifts).to_ical())
     print(f"{len(shifts)}件のシフトを {OUTPUT} に出力しました。")
