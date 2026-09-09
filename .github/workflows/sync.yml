@@ -26,7 +26,7 @@ jobs:
         run: |
           test -n "$RSHIFT_USER_ID"
           test -n "$RSHIFT_PASSWORD"
-      - name: Inspect logged-in staff label
+      - name: Inspect day-cell structure
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
           RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
@@ -38,18 +38,28 @@ jobs:
           from bs4 import BeautifulSoup
           import re
           import rshift_sync
-          s, response = rshift_sync.login_session()
-          soup = BeautifulSoup(response.text, 'html.parser')
-          print('[top] title=', soup.title.get_text(' ', strip=True) if soup.title else '')
-          for tag in soup.find_all(['a','span','div','p','td','th','label']):
-              text = tag.get_text(' ', strip=True)
-              if any(k in text for k in ('ログアウト','ようこそ','さん','従業員トップ')) and len(text) < 120:
-                  print('[top] text=', text)
-          for form in soup.find_all('form'):
-              for inp in form.select('input[name]'):
-                  name = inp.get('name','').lower()
-                  if any(k in name for k in ('staff','employee','user','login','name')):
-                      print('[top] input=', inp.get('name'), inp.get('type'), 'has_value=', bool(inp.get('value')))
+          html, year, month = rshift_sync.fetch_staff_page()
+          soup = BeautifulSoup(html, 'html.parser')
+          table = soup.select_one('table.staffpage-monthly-table')
+          rows = table.find_all('tr') if table else []
+          row = rows[4]
+          cell = row.find_all(['td','th'])[1]
+          print('[cell] top classes=', cell.get('class', []), 'children=', len(cell.find_all(True)))
+          seen = set()
+          for node in cell.find_all(True):
+              classes = tuple(node.get('class', []))
+              text = node.get_text(' ', strip=True)
+              times = re.findall(r'(?:[01]?\d|2[0-3])[:：][0-5]\d', text)
+              key = (node.name, classes, len(times), text[:20])
+              if times and key not in seen:
+                  seen.add(key)
+                  print('[time-node]', key)
+          print('[header date nodes]')
+          for i, row in enumerate(rows[:3]):
+              for node in row.find_all(['td','th']):
+                  text = node.get_text(' ', strip=True)
+                  if re.search(r'\d{1,2}[/-]\d{1,2}|\d{1,2}月\d{1,2}日', text):
+                      print('[date]', node.name, node.get('class', []), text[:60], 'colspan=', node.get('colspan'))
           PY
       - name: Fetch shifts and generate ICS
         env:
