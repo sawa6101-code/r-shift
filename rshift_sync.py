@@ -2,7 +2,7 @@ import os
 import re
 import hashlib
 from calendar import monthrange
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -18,23 +18,6 @@ PASSWORD = os.environ["RSHIFT_PASSWORD"]
 OUTPUT = Path(os.getenv("OUTPUT_ICS_PATH", "docs/shift_calendar.ics"))
 JST = timezone(timedelta(hours=9))
 TIME_RE = re.compile(r"(?:[01]?\d|2[0-3])[:：][0-5]\d")
-
-
-def parse_date(text, default_year, default_month):
-    text = text or ""
-    m = re.search(r"(20\d{2})[/-](\d{1,2})[/-](\d{1,2})", text)
-    if m:
-        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
-    m = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日", text)
-    if m:
-        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
-    m = re.search(r"(\d{1,2})[/-](\d{1,2})", text)
-    if m:
-        return datetime(default_year, int(m.group(1)), int(m.group(2))).date()
-    m = re.search(r"(\d{1,2})月(\d{1,2})日", text)
-    if m:
-        return datetime(default_year, int(m.group(1)), int(m.group(2))).date()
-    return None
 
 
 def target_month():
@@ -125,8 +108,22 @@ def login_session():
     return s, response
 
 
+def extract_staff_name(html):
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup.find_all(["a", "span", "div", "p", "td", "th", "label"]):
+        text = tag.get_text(" ", strip=True)
+        if "パスワードを変更" in text and "ログアウト" in text:
+            prefix = text.split("パスワードを変更", 1)[0].strip()
+            if ">" in prefix:
+                prefix = prefix.rsplit(">", 1)[-1].strip()
+            if prefix and len(prefix) <= 40:
+                return prefix
+    raise RuntimeError("ログイン中の従業員名を取得できませんでした")
+
+
 def fetch_staff_page():
     s, response = login_session()
+    staff_name = extract_staff_name(response.text)
     targets = ([STAFF_PAGE_URL] if STAFF_PAGE_URL else []) + [response.url, BASE_URL + "/staffpage/", BASE_URL + "/staff/"]
     page = None
     for target in dict.fromkeys(targets):
@@ -160,54 +157,55 @@ def fetch_staff_page():
     if "ログイン" in r.text and "ログアウト" not in r.text:
         raise RuntimeError("対象月の月間シフトページ取得時にログインへ戻されました")
     print(f"R-Shift対象月: {year:04d}-{month:02d}")
-    return r.text, year, month
+    return r.text, year, month, staff_name
 
 
-def parse_monthly_reference(html, year, month):
+def parse_staff_month(html, year, month, staff_name):
     soup = BeautifulSoup(html, "html.parser")
+    table = soup.select_one("table.staffpage-monthly-table")
+    if table is None:
+        raise RuntimeError("月間シフト表を見つけられませんでした")
+
+    target_row = None
+    for row in table.find_all("tr"):
+        cells = row.find_all(["td", "th"])
+        if not cells:
+            continue
+        first_text = cells[0].get_text(" ", strip=True)
+        if staff_name in first_text:
+            target_row = row
+            break
+    if target_row is None:
+        raise RuntimeError("ログイン中の従業員の月間シフト行を特定できませんでした")
+
+    cells = target_row.find_all(["td", "th"])
+    if len(cells) < 2:
+        raise RuntimeError("従業員シフト行の構造を認識できませんでした")
+    shift_cell = cells[1]
+    shift_cols = shift_cell.select(".staff_row.shift_col")
+    days = monthrange(year, month)[1]
+    print(f"[parser] staff={staff_name} shift_cols={len(shift_cols)}")
+    if len(shift_cols) < days * 4:
+        raise RuntimeError(f"月間シフト列数が不足しています: {len(shift_cols)} / {days * 4}")
+
     shifts = []
     seen = set()
-    for row in soup.find_all("tr"):
-        text = row.get_text(" ", strip=True)
-        if not text:
+    for idx, node in enumerate(shift_cols):
+        classes = set(node.get("class", []))
+        if "working_shift" not in classes or "help_shift" in classes:
             continue
-        times = TIME_RE.findall(text)
+        times = TIME_RE.findall(node.get_text(" ", strip=True))
         if len(times) < 2:
             continue
-        d = parse_date(text, year, month)
-        if not d:
+        day_index = idx // 4
+        if day_index >= days:
             continue
+        d = date(year, month, day_index + 1)
         shift = make_shift(d, times[:2])
         if shift and shift not in seen:
             seen.add(shift)
             shifts.append(shift)
-
-    # 行単位で日付が取れない場合は、日付ラベルを持つ近傍ブロックを探索。
-    if not shifts:
-        for node in soup.find_all(["td", "li", "div"]):
-            text = node.get_text(" ", strip=True)
-            times = TIME_RE.findall(text)
-            if len(times) < 2:
-                continue
-            d = parse_date(text, year, month)
-            if not d:
-                parent = node.parent
-                if parent:
-                    parent_text = parent.get_text(" ", strip=True)
-                    d = parse_date(parent_text, year, month)
-            shift = make_shift(d, times[:2])
-            if shift and shift not in seen:
-                seen.add(shift)
-                shifts.append(shift)
     return sorted(shifts)
-
-
-def parse_shift_rows(html, year, month):
-    shifts = parse_monthly_reference(html, year, month)
-    print(f"[parser] parsed shifts={len(shifts)}")
-    if not shifts:
-        raise RuntimeError("R-Shift対象月から勤務時間を0件取得しました。対象月またはページ構造を確認してください")
-    return shifts
 
 
 def build_calendar(shifts):
@@ -229,8 +227,10 @@ def build_calendar(shifts):
 
 
 def main():
-    html, year, month = fetch_staff_page()
-    shifts = parse_shift_rows(html, year, month)
+    html, year, month, staff_name = fetch_staff_page()
+    shifts = parse_staff_month(html, year, month, staff_name)
+    if not shifts:
+        raise RuntimeError("対象月の確定勤務シフトを0件取得しました")
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_bytes(build_calendar(shifts).to_ical())
     print(f"{len(shifts)}件のシフトを {OUTPUT} に出力しました。")
