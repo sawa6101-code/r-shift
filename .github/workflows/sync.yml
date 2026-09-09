@@ -1,8 +1,6 @@
 name: R-Shift sync
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: '17 */2 * * *'
