@@ -168,9 +168,6 @@ def parse_rshift_hidden_data(html):
         if not buttons:
             continue
         for idx, button in enumerate(buttons):
-            classes = set(button.get("class", []))
-            if "plan_update_color" not in classes:
-                continue
             def val(name):
                 node = form.select_one(f'input[name="{name}{idx}"]')
                 return node.get("value", "") if node else ""
@@ -190,7 +187,7 @@ def parse_rshift_hidden_data(html):
 def parse_shift_rows(html):
     shifts = parse_rshift_hidden_data(html)
     if not shifts:
-        raise RuntimeError("R-Shift対象月から確定シフトを0件取得しました。ページ構造または対象月を確認してください")
+        raise RuntimeError("R-Shift対象月から勤務時間を0件取得しました。対象月またはページ構造を確認してください")
     return shifts
 
 
