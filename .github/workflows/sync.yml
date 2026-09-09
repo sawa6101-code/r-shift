@@ -34,6 +34,30 @@ jobs:
           test -n "$RSHIFT_PASSWORD" || { echo 'RSHIFT_PASSWORD が未設定です'; exit 1; }
           echo 'R-Shift認証情報: 設定済み'
 
+      - name: Inspect monthly table
+        env:
+          RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
+          RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
+          RSHIFT_BASE_URL: https://sgy5zm.rshift.jp
+          RSHIFT_ID_FIELD: login_id
+          RSHIFT_PASSWORD_FIELD: password
+        run: |
+          python - <<'PY'
+          from bs4 import BeautifulSoup
+          import re
+          import rshift_sync
+          html, year, month = rshift_sync.fetch_staff_page()
+          soup = BeautifulSoup(html, 'html.parser')
+          print('[inspect] tables=', len(soup.find_all('table')))
+          for ti, table in enumerate(soup.find_all('table')[:5]):
+              print('[inspect] table', ti, 'class=', table.get('class', []), 'rows=', len(table.find_all('tr')))
+              for ri, row in enumerate(table.find_all('tr')[:20]):
+                  text = row.get_text(' | ', strip=True)
+                  times = re.findall(r'(?:[01]?\d|2[0-3])[:：][0-5]\d', text)
+                  dates = re.findall(r'\d{1,2}[/-]\d{1,2}|\d{1,2}月\d{1,2}日', text)
+                  print('[inspect] row', ri, 'cells=', len(row.find_all(['td','th'])), 'dates=', dates[:5], 'times=', times[:6], 'text=', text[:300])
+          PY
+
       - name: Fetch shifts and generate ICS
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
