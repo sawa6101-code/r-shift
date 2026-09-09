@@ -162,7 +162,6 @@ def fetch_staff_page():
 
 
 def extract_help_shop(node):
-    """R-Shiftの応援セルから応援先店舗名を取得する。"""
     for shop_node in node.select(".help_shop"):
         text = shop_node.get_text(" ", strip=True)
         if text:
@@ -171,12 +170,10 @@ def extract_help_shop(node):
             value = shop_node.get(attr, "").strip()
             if value:
                 return value
-
     for attr in ("data-shop-name", "data-store-name", "data-help-shop", "title", "aria-label"):
         value = node.get(attr, "").strip()
         if value:
             return value
-
     text = node.get_text(" ", strip=True)
     text = TIME_RE.sub(" ", text)
     text = text.replace("応援", " ")
@@ -204,6 +201,16 @@ def parse_staff_month(html, year, month, staff_name):
     days = monthrange(year, month)[1]
     if len(shift_cols) < days:
         raise RuntimeError(f"月間シフト列数が不足しています: {len(shift_cols)} / {days}")
+
+    debug_path = os.getenv("RSHIFT_DEBUG_HELP_PATH", "").strip()
+    if debug_path:
+        lines = []
+        for idx, node in enumerate(shift_cols[:days], start=1):
+            classes = " ".join(node.get("class", []))
+            text = node.get_text(" ", strip=True)
+            lines.append(f"DAY {idx}\nCLASS={classes}\nTEXT={text}\nHTML={node}\n---")
+        Path(debug_path).write_text("\n".join(lines), encoding="utf-8")
+
     shifts = []
     seen = set()
     for idx, node in enumerate(shift_cols[:days]):
@@ -219,7 +226,6 @@ def parse_staff_month(html, year, month, staff_name):
         shift = make_shift(d, times[:2])
         if not shift:
             continue
-
         if "help_shift" in classes:
             shop = extract_help_shop(node)
             summary = f"応援：{shop}" if shop else "応援"
@@ -227,7 +233,6 @@ def parse_staff_month(html, year, month, staff_name):
         else:
             summary = "アールシフト（出勤）"
             location = None
-
         item = (shift[0], shift[1], summary, location)
         key = (shift[0], shift[1], summary, location)
         if key not in seen:
