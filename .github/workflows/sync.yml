@@ -27,14 +27,17 @@ jobs:
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
           RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
+          RSHIFT_HOME_ADDRESS: ${{ secrets.RSHIFT_HOME_ADDRESS }}
         run: |
           test -n "$RSHIFT_USER_ID"
           test -n "$RSHIFT_PASSWORD"
+          test -n "$RSHIFT_HOME_ADDRESS"
 
       - name: Fetch shifts and generate ICS
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
           RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
+          RSHIFT_HOME_ADDRESS: ${{ secrets.RSHIFT_HOME_ADDRESS }}
           RSHIFT_BASE_URL: https://sgy5zm.rshift.jp
           RSHIFT_ID_FIELD: login_id
           RSHIFT_PASSWORD_FIELD: password
