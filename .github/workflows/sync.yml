@@ -37,7 +37,7 @@ jobs:
           RSHIFT_BASE_URL: https://sgy5zm.rshift.jp
           RSHIFT_ID_FIELD: login_id
           RSHIFT_PASSWORD_FIELD: password
-        run: python rshift_sync.py
+        run: python -c "import runpy; import store_geocode_patch; runpy.run_path('rshift_sync.py', run_name='__main__')"
       - name: Commit updated calendar
         run: |
           git config user.name 'github-actions[bot]'
