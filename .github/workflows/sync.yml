@@ -14,44 +14,21 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install -r requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt
       - name: Validate secrets
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
           RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
         run: |
-          test -n "$RSHIFT_USER_ID"
-          test -n "$RSHIFT_PASSWORD"
-      - name: Inspect shift-cell ancestors
-        env:
-          RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
-          RSHIFT_PASSWORD: ${{ secrets.RSHIFT_PASSWORD }}
-          RSHIFT_BASE_URL: https://sgy5zm.rshift.jp
-          RSHIFT_ID_FIELD: login_id
-          RSHIFT_PASSWORD_FIELD: password
-        run: |
-          python - <<'PY'
-          from bs4 import BeautifulSoup
-          import rshift_sync
-          html, _, _ = rshift_sync.fetch_staff_page()
-          soup = BeautifulSoup(html, 'html.parser')
-          row = soup.select_one('table.staffpage-monthly-table').find_all('tr')[4]
-          cell = row.find_all(['td','th'])[1]
-          nodes = cell.select('.staff_row.shift_col.working_shift')
-          print('[count] working_shift=', len(nodes))
-          for i, node in enumerate(nodes):
-              chain=[]
-              cur=node
-              for _ in range(6):
-                  if cur is None: break
-                  chain.append((cur.name, cur.get('class', []), {k:v for k,v in cur.attrs.items() if k.startswith('data-') or k in ('id','title')}))
-                  cur=cur.parent
-              print('[node]', i, 'text=', node.get_text(' ',strip=True)[:50], 'chain=', chain)
-          PY
+          test -n "$RSHIFT_USER_ID" || { echo 'RSHIFT_USER_ID が未設定です'; exit 1; }
+          test -n "$RSHIFT_PASSWORD" || { echo 'RSHIFT_PASSWORD が未設定です'; exit 1; }
       - name: Fetch shifts and generate ICS
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
