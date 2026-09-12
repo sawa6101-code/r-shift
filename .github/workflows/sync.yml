@@ -63,6 +63,43 @@ jobs:
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
 
+      - name: Apply actual help shift times
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('rshift_sync.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''        if "help_shift" in classes:
+              shop = extract_help_shop(node)
+              summary = f"{shop}応援" if shop else "応援"
+              start = datetime(d.year, d.month, d.day, 9, 0, tzinfo=JST)
+              end = datetime(d.year, d.month, d.day, 20, 0, tzinfo=JST)
+              item = (start, end, summary, shop, True)
+          else:
+              times = TIME_RE.findall(node.get_text(" ", strip=True))
+              if len(times) < 2:
+                  continue
+          '''
+          new = '''        times = TIME_RE.findall(node.get_text(" ", strip=True))
+          if "help_shift" in classes:
+              shop = extract_help_shop(node)
+              summary = f"{shop}応援" if shop else "応援"
+              # 応援勤務もR-Shiftに表示されている実際の勤務時刻を使用する。
+              # 9:00-20:00固定だと10:00開始などの応援シフトを誤って9:00開始としてしまう。
+              shift = make_shift(d, times[:2]) if len(times) >= 2 else None
+              if not shift:
+                  raise RuntimeError(f"応援勤務の時刻を取得できませんでした: {d.isoformat()} {shop or ''}")
+              item = (shift[0], shift[1], summary, shop, True)
+          else:
+              if len(times) < 2:
+                  continue
+          '''
+          if old not in text:
+              raise SystemExit('応援勤務の時刻処理箇所を特定できませんでした')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Fetch shifts and generate ICS
         env:
           RSHIFT_USER_ID: ${{ secrets.RSHIFT_USER_ID }}
