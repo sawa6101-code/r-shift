@@ -111,6 +111,55 @@ jobs:
           RSHIFT_PASSWORD_FIELD: password
         run: python rshift_sync.py
 
+      - name: Apply manual shift corrections
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          from datetime import datetime, timedelta
+
+          path = Path('docs/shift_calendar.ics')
+          text = path.read_text(encoding='utf-8')
+
+          overrides = {
+              '20260920': ('1000', '1900'),
+              '20260921': ('0945', '2100'),
+          }
+
+          for day, (start, end) in overrides.items():
+              # 対象日の応援イベントだけを修正
+              pattern = re.compile(
+                  rf'(BEGIN:VEVENT\r?\nSUMMARY:[^\r\n]*応援\r?\nDTSTART;TZID="UTC\\+09:00":){day}T\d{{4}}(\r?\nDTEND;TZID="UTC\\+09:00":){day}T\d{{4}}(.*?\r?\nEND:VEVENT)',
+                  re.S,
+              )
+              text, count = pattern.subn(rf'\g<1>{day}T{start}\g<2>{day}T{end}\g<3>', text, count=1)
+              if count != 1:
+                  raise SystemExit(f'勤務時間を修正できませんでした: {day}')
+
+              # 同日の出勤移動イベントは勤務開始時刻に合わせて再計算する。
+              travel_pattern = re.compile(
+                  rf'(BEGIN:VEVENT\r?\nSUMMARY:出勤移動\r?\nDTSTART;TZID="UTC\\+09:00":){day}T(\d{{4}})(\r?\nDTEND;TZID="UTC\\+09:00":){day}T\d{{4}}(.*?X-RSHIFT-TRAVEL-BUFFER-MINUTES:(\d+).*?X-RSHIFT-TRAVEL-MINUTES:(\d+).*?\r?\nEND:VEVENT)',
+                  re.S,
+              )
+
+              def fix_travel(match):
+                  travel_minutes = int(match.group(6))
+                  buffer_minutes = int(match.group(5))
+                  shift_start = datetime.strptime(day + start, '%Y%m%d%H%M')
+                  travel_start = shift_start - timedelta(minutes=travel_minutes + buffer_minutes)
+                  return (
+                      match.group(1) + travel_start.strftime('%H%M') +
+                      match.group(3) + day + 'T' + start + match.group(4)
+                  )
+
+              text, count = travel_pattern.subn(fix_travel, text, count=1)
+              if count != 1:
+                  raise SystemExit(f'出勤移動を修正できませんでした: {day}')
+
+          path.write_text(text, encoding='utf-8')
+          print('手動修正: 2026-09-20 10:00-19:00 / 2026-09-21 09:45-21:00')
+          PY
+
       - name: Commit updated calendar
         run: |
           git config user.name "github-actions[bot]"
