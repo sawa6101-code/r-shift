@@ -95,36 +95,27 @@ jobs:
           if not blocks:
               raise SystemExit('ICSイベントが見つかりませんでした')
 
-          def replace_line(block, prefix, value):
-              pattern = rf'(?m)^{re.escape(prefix)}[^\\r\\n]*$'
-              new_line = prefix + value
-              updated, count = re.subn(pattern, new_line, block, count=1)
-              return updated, count
-
           updated_blocks = []
+          changed_shifts = set()
+          changed_travel = set()
+
           for block in blocks:
-              m_start = re.search(r'DTSTART;TZID="UTC\+09:00":(\d{8})T(\d{4})', block)
-              if not m_start:
-                  updated_blocks.append(block)
-                  continue
+              lines = block.splitlines()
+              summary = next((line for line in lines if line.startswith('SUMMARY:')), '')
+              start_line = next((line for line in lines if line.startswith('DTSTART;TZID="UTC+09:00":')), '')
+              m = re.search(r':(\d{8})T(\d{4})$', start_line)
+              day = m.group(1) if m else None
 
-              day = m_start.group(1)
-              if day in overrides and 'SUMMARY:' in block and '応援' in block.split('SUMMARY:', 1)[1].splitlines()[0]:
+              if day in overrides and '応援' in summary:
                   start, end = overrides[day]
-                  block = re.sub(
-                      rf'(?m)^DTSTART;TZID="UTC\+09:00":{day}T\d{{4}}$',
-                      f'DTSTART;TZID="UTC+09:00":{day}T{start}',
-                      block,
-                      count=1,
-                  )
-                  block = re.sub(
-                      rf'(?m)^DTEND;TZID="UTC\+09:00":{day}T\d{{4}}$',
-                      f'DTEND;TZID="UTC+09:00":{day}T{end}',
-                      block,
-                      count=1,
-                  )
+                  for i, line in enumerate(lines):
+                      if line.startswith(f'DTSTART;TZID="UTC+09:00":{day}T'):
+                          lines[i] = f'DTSTART;TZID="UTC+09:00":{day}T{start}'
+                          changed_shifts.add(day)
+                      elif line.startswith(f'DTEND;TZID="UTC+09:00":{day}T'):
+                          lines[i] = f'DTEND;TZID="UTC+09:00":{day}T{end}'
 
-              if day in overrides and 'SUMMARY:出勤移動' in block:
+              if day in overrides and summary == 'SUMMARY:出勤移動':
                   start, _ = overrides[day]
                   travel_m = re.search(r'X-RSHIFT-TRAVEL-MINUTES:(\d+)', block)
                   buffer_m = re.search(r'X-RSHIFT-TRAVEL-BUFFER-MINUTES:(\d+)', block)
@@ -134,22 +125,22 @@ jobs:
                   departure = shift_start - timedelta(
                       minutes=int(travel_m.group(1)) + int(buffer_m.group(1))
                   )
-                  block = re.sub(
-                      rf'(?m)^DTSTART;TZID="UTC\+09:00":{day}T\d{{4}}$',
-                      f'DTSTART;TZID="UTC+09:00":{day}T{departure:%H%M}',
-                      block,
-                      count=1,
-                  )
-                  block = re.sub(
-                      rf'(?m)^DTEND;TZID="UTC\+09:00":{day}T\d{{4}}$',
-                      f'DTEND;TZID="UTC+09:00":{day}T{start}',
-                      block,
-                      count=1,
-                  )
+                  for i, line in enumerate(lines):
+                      if line.startswith(f'DTSTART;TZID="UTC+09:00":{day}T'):
+                          lines[i] = f'DTSTART;TZID="UTC+09:00":{day}T{departure:%H%M}'
+                          changed_travel.add(day)
+                      elif line.startswith(f'DTEND;TZID="UTC+09:00":{day}T'):
+                          lines[i] = f'DTEND;TZID="UTC+09:00":{day}T{start}'
 
-              updated_blocks.append(block)
+              updated_blocks.append('\n'.join(lines))
 
-          # 元のVEVENT位置を保ったまま置換
+          missing_shifts = set(overrides) - changed_shifts
+          missing_travel = set(overrides) - changed_travel
+          if missing_shifts:
+              raise SystemExit(f'勤務時間を修正できませんでした: {sorted(missing_shifts)}')
+          if missing_travel:
+              raise SystemExit(f'出勤移動を修正できませんでした: {sorted(missing_travel)}')
+
           it = iter(updated_blocks)
           text = re.sub(r'BEGIN:VEVENT\r?\n.*?\r?\nEND:VEVENT', lambda _: next(it), text, flags=re.S)
           path.write_text(text, encoding='utf-8')
