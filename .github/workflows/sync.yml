@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/sync.yml'
+      - 'rshift_sync.py'
   schedule:
     - cron: '17 */2 * * *'
   workflow_dispatch:
@@ -85,6 +86,7 @@ jobs:
           text = path.read_text(encoding='utf-8')
 
           overrides = {
+              '20260913': ('1000', '2000'),
               '20260920': ('1000', '1900'),
               '20260921': ('0945', '2100'),
           }
@@ -120,7 +122,7 @@ jobs:
                   raise SystemExit(f'出勤移動を修正できませんでした: {day}')
 
           path.write_text(text, encoding='utf-8')
-          print('手動修正: 2026-09-20 10:00-19:00 / 2026-09-21 09:45-21:00')
+          print('手動修正: 2026-09-13 10:00-20:00 / 2026-09-20 10:00-19:00 / 2026-09-21 09:45-21:00')
           PY
 
       - name: Commit updated calendar
