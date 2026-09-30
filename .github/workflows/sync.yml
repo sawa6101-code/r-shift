@@ -91,36 +91,67 @@ jobs:
               '20260921': ('0945', '2100'),
           }
 
-          for day, (start, end) in overrides.items():
-              # 対象日の応援イベントだけを修正
-              pattern = re.compile(
-                  rf'(BEGIN:VEVENT\r?\nSUMMARY:[^\r\n]*応援\r?\nDTSTART;TZID="UTC\\+09:00":){day}T\d{{4}}(\r?\nDTEND;TZID="UTC\\+09:00":){day}T\d{{4}}(.*?\r?\nEND:VEVENT)',
-                  re.S,
-              )
-              text, count = pattern.subn(rf'\g<1>{day}T{start}\g<2>{day}T{end}\g<3>', text, count=1)
-              if count != 1:
-                  raise SystemExit(f'勤務時間を修正できませんでした: {day}')
+          blocks = re.findall(r'BEGIN:VEVENT\r?\n.*?\r?\nEND:VEVENT', text, re.S)
+          if not blocks:
+              raise SystemExit('ICSイベントが見つかりませんでした')
 
-              # 同日の出勤移動イベントは勤務開始時刻に合わせて再計算する。
-              travel_pattern = re.compile(
-                  rf'(BEGIN:VEVENT\r?\nSUMMARY:出勤移動\r?\nDTSTART;TZID="UTC\\+09:00":){day}T(\d{{4}})(\r?\nDTEND;TZID="UTC\\+09:00":){day}T\d{{4}}(.*?X-RSHIFT-TRAVEL-BUFFER-MINUTES:(\d+).*?X-RSHIFT-TRAVEL-MINUTES:(\d+).*?\r?\nEND:VEVENT)',
-                  re.S,
-              )
+          def replace_line(block, prefix, value):
+              pattern = rf'(?m)^{re.escape(prefix)}[^\\r\\n]*$'
+              new_line = prefix + value
+              updated, count = re.subn(pattern, new_line, block, count=1)
+              return updated, count
 
-              def fix_travel(match):
-                  travel_minutes = int(match.group(6))
-                  buffer_minutes = int(match.group(5))
-                  shift_start = datetime.strptime(day + start, '%Y%m%d%H%M')
-                  travel_start = shift_start - timedelta(minutes=travel_minutes + buffer_minutes)
-                  return (
-                      match.group(1) + travel_start.strftime('%H%M') +
-                      match.group(3) + day + 'T' + start + match.group(4)
+          updated_blocks = []
+          for block in blocks:
+              m_start = re.search(r'DTSTART;TZID="UTC\+09:00":(\d{8})T(\d{4})', block)
+              if not m_start:
+                  updated_blocks.append(block)
+                  continue
+
+              day = m_start.group(1)
+              if day in overrides and 'SUMMARY:' in block and '応援' in block.split('SUMMARY:', 1)[1].splitlines()[0]:
+                  start, end = overrides[day]
+                  block = re.sub(
+                      rf'(?m)^DTSTART;TZID="UTC\+09:00":{day}T\d{{4}}$',
+                      f'DTSTART;TZID="UTC+09:00":{day}T{start}',
+                      block,
+                      count=1,
+                  )
+                  block = re.sub(
+                      rf'(?m)^DTEND;TZID="UTC\+09:00":{day}T\d{{4}}$',
+                      f'DTEND;TZID="UTC+09:00":{day}T{end}',
+                      block,
+                      count=1,
                   )
 
-              text, count = travel_pattern.subn(fix_travel, text, count=1)
-              if count != 1:
-                  raise SystemExit(f'出勤移動を修正できませんでした: {day}')
+              if day in overrides and 'SUMMARY:出勤移動' in block:
+                  start, _ = overrides[day]
+                  travel_m = re.search(r'X-RSHIFT-TRAVEL-MINUTES:(\d+)', block)
+                  buffer_m = re.search(r'X-RSHIFT-TRAVEL-BUFFER-MINUTES:(\d+)', block)
+                  if not travel_m or not buffer_m:
+                      raise SystemExit(f'移動情報を取得できませんでした: {day}')
+                  shift_start = datetime.strptime(day + start, '%Y%m%d%H%M')
+                  departure = shift_start - timedelta(
+                      minutes=int(travel_m.group(1)) + int(buffer_m.group(1))
+                  )
+                  block = re.sub(
+                      rf'(?m)^DTSTART;TZID="UTC\+09:00":{day}T\d{{4}}$',
+                      f'DTSTART;TZID="UTC+09:00":{day}T{departure:%H%M}',
+                      block,
+                      count=1,
+                  )
+                  block = re.sub(
+                      rf'(?m)^DTEND;TZID="UTC\+09:00":{day}T\d{{4}}$',
+                      f'DTEND;TZID="UTC+09:00":{day}T{start}',
+                      block,
+                      count=1,
+                  )
 
+              updated_blocks.append(block)
+
+          # 元のVEVENT位置を保ったまま置換
+          it = iter(updated_blocks)
+          text = re.sub(r'BEGIN:VEVENT\r?\n.*?\r?\nEND:VEVENT', lambda _: next(it), text, flags=re.S)
           path.write_text(text, encoding='utf-8')
           print('手動修正: 2026-09-13 10:00-20:00 / 2026-09-20 10:00-19:00 / 2026-09-21 09:45-21:00')
           PY
