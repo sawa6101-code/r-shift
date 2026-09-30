@@ -234,12 +234,14 @@ def parse_staff_month(html, year, month, staff_name):
         if "help_shift" in classes:
             shop = extract_help_shop(node)
             summary = f"{shop}応援" if shop else "応援"
-            # 応援勤務もR-Shiftに表示されている実際の勤務時刻を使用する。
-            if len(times) < 2:
-                raise RuntimeError(f"応援勤務の時刻を取得できませんでした: {d.isoformat()} {shop or ''}")
-            shift = make_shift(d, times[:2])
+            # R-Shiftの応援セルには勤務時刻が表示されない月があるため、
+            # 時刻を取得できる場合はそれを優先し、取得できない場合は標準応援時間を使用する。
+            if len(times) >= 2:
+                shift = make_shift(d, times[:2])
+            else:
+                shift = make_shift(d, ("09:00", "20:00"))
             if not shift:
-                raise RuntimeError(f"応援勤務の時刻を解釈できませんでした: {d.isoformat()} {shop or ''}")
+                raise RuntimeError(f"応援勤務の時刻を設定できませんでした: {d.isoformat()} {shop or ''}")
             item = (shift[0], shift[1], summary, shop, True)
         else:
             if len(times) < 2:
