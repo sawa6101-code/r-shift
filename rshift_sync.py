@@ -27,6 +27,12 @@ GEOCODE_CACHE = {}
 LAST_GEOCODE_REQUEST = 0.0
 TRAVEL_BUFFER_MINUTES = 15
 NORMAL_WORKPLACE = "岩成台店"
+# R-Shiftの応援セルに時刻が表示されない場合でも、確認済みの日付は実勤務時刻を優先する。
+HELP_SHIFT_OVERRIDES = {
+    "2026-09-13": ("10:00", "20:00"),
+    "2026-09-20": ("10:00", "19:00"),
+    "2026-09-21": ("09:45", "21:00"),
+}
 
 
 def target_month():
@@ -236,7 +242,10 @@ def parse_staff_month(html, year, month, staff_name):
             summary = f"{shop}応援" if shop else "応援"
             # R-Shiftの応援セルには勤務時刻が表示されない月があるため、
             # 時刻を取得できる場合はそれを優先し、取得できない場合は標準応援時間を使用する。
-            if len(times) >= 2:
+            override_times = HELP_SHIFT_OVERRIDES.get(d.isoformat())
+            if override_times:
+                shift = make_shift(d, override_times)
+            elif len(times) >= 2:
                 shift = make_shift(d, times[:2])
             else:
                 shift = make_shift(d, ("09:00", "20:00"))
