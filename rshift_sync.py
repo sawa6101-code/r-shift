@@ -230,14 +230,18 @@ def parse_staff_month(html, year, month, staff_name):
             continue
         d = date(year, month, idx + 1)
 
+        times = TIME_RE.findall(node.get_text(" ", strip=True))
         if "help_shift" in classes:
             shop = extract_help_shop(node)
             summary = f"{shop}応援" if shop else "応援"
-            start = datetime(d.year, d.month, d.day, 9, 0, tzinfo=JST)
-            end = datetime(d.year, d.month, d.day, 20, 0, tzinfo=JST)
-            item = (start, end, summary, shop, True)
+            # 応援勤務もR-Shiftに表示されている実際の勤務時刻を使用する。
+            if len(times) < 2:
+                raise RuntimeError(f"応援勤務の時刻を取得できませんでした: {d.isoformat()} {shop or ''}")
+            shift = make_shift(d, times[:2])
+            if not shift:
+                raise RuntimeError(f"応援勤務の時刻を解釈できませんでした: {d.isoformat()} {shop or ''}")
+            item = (shift[0], shift[1], summary, shop, True)
         else:
-            times = TIME_RE.findall(node.get_text(" ", strip=True))
             if len(times) < 2:
                 continue
             shift = make_shift(d, times[:2])
