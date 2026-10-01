@@ -325,6 +325,9 @@ def get_shop_coordinates(shop):
     }
     queries = []
     if shop in known_addresses:
+        # 番地そのものを最優先し、店舗名を付加した検索で別地点を拾わないようにする。
+        queries.append(known_addresses[shop])
+        queries.append(known_addresses[shop].replace("丁目", "-").replace("番地", "-").replace(" ", ""))
         queries.append(f"スギ薬局 {shop} {known_addresses[shop]}")
     queries += aliases.get(shop, [])
     queries += [
