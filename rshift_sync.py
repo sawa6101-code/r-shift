@@ -290,6 +290,19 @@ def geocode(query):
     coords = None
     if results:
         coords = (float(results[0]["lon"]), float(results[0]["lat"]))
+    else:
+        # Nominatimで日本の番地が解決できない場合は国土地理院の住所検索をフォールバックに使用。
+        gsi = requests.get(
+            "https://msearch.gsi.go.jp/address-search/AddressSearch",
+            params={"q": query},
+            headers={"User-Agent": "r-shift-sync/1.1 (GitHub Actions)"},
+            timeout=30,
+        )
+        if gsi.ok:
+            gsi_results = gsi.json()
+            if gsi_results:
+                lon, lat = gsi_results[0]["geometry"]["coordinates"][:2]
+                coords = (float(lon), float(lat))
     GEOCODE_CACHE[query] = coords
     return coords
 
