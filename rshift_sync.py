@@ -234,15 +234,10 @@ def parse_staff_month(html, year, month, staff_name):
         if "help_shift" in classes:
             shop = extract_help_shop(node)
             summary = f"{shop}応援" if shop else "応援"
-            # 応援勤務もR-Shiftに登録された時刻のみを使用し、固定時刻や標準時刻で補完しない。
-            if len(times) < 2:
-                raise RuntimeError(
-                    f"応援勤務の登録時刻をR-Shift画面から取得できませんでした: {d.isoformat()} {shop or ''}。"
-                    "R-Shift側に開始・終了時刻が登録されているか確認してください。"
-                )
-            shift = make_shift(d, times[:2])
+            # 応援勤務は登録時刻にかかわらず、09:00～21:00で固定登録する。
+            shift = make_shift(d, ["09:00", "21:00"])
             if not shift:
-                raise RuntimeError(f"応援勤務の時刻を設定できませんでした: {d.isoformat()} {shop or ''}")
+                raise RuntimeError(f"応援勤務の固定時刻を設定できませんでした: {d.isoformat()} {shop or ''}")
             item = (shift[0], shift[1], summary, shop, True)
         else:
             if len(times) < 2:
