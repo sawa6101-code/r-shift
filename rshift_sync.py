@@ -252,6 +252,18 @@ def parse_staff_month(html, year, month, staff_name):
             seen.add(key)
             shifts.append(item)
 
+    # 個別のシフト変更。対象日の既存勤務を除去してから指定内容に置き換える。
+    manual_overrides = {
+        date(2026, 11, 22): ("スギ薬局ことぶき店【応援】", "ことぶき店", "10:00", "19:00"),
+    }
+    for override_date, (summary, shop, start_time, end_time) in manual_overrides.items():
+        if override_date.year == year and override_date.month == month:
+            shifts = [item for item in shifts if item[0].date() != override_date]
+            shift = make_shift(override_date, [start_time, end_time])
+            if not shift:
+                raise RuntimeError(f"個別変更シフトの時刻を設定できませんでした: {override_date.isoformat()}")
+            shifts.append((shift[0], shift[1], summary, shop, True))
+
     return sorted(shifts, key=lambda item: item[0])
 
 
