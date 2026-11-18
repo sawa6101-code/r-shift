@@ -254,7 +254,10 @@ def parse_staff_month(html, year, month, staff_name):
 
     # 個別のシフト変更。対象日の既存勤務を除去してから指定内容に置き換える。
     manual_overrides = {
+        date(2026, 11, 20): ("春日井中央応援", "春日井中央", "10:00", "20:00"),
         date(2026, 11, 22): ("ことぶき店応援", "ことぶき店", "10:00", "19:00"),
+        date(2026, 11, 23): ("高蔵寺店応援", "高蔵寺店", "09:45", "21:00"),
+        date(2026, 11, 29): ("高蔵寺店応援", "高蔵寺店", "09:45", "21:00"),
     }
     for override_date, (summary, shop, start_time, end_time) in manual_overrides.items():
         if override_date.year == year and override_date.month == month:
